@@ -8,9 +8,15 @@
 
 ---
 
-**double-shot** takes a plan document all the way to a built, tested, reviewed
-codebase. You write the plan and steer once at the blueprint; two background
-workflows do the parallel building and adversarially verify their own work.
+**double-shot** is a plugin for **Claude Code** that takes a plan document all
+the way to a built, tested, reviewed codebase. You write the plan and steer once
+at the blueprint; two background Claude Code workflows do the parallel building
+and adversarially verify their own work.
+
+It works for any stack, but shines when your plan has a **checkable invariant** —
+a core property the build can mechanically prove it didn't break. **Rust is a
+great fit:** its type system can make the invariant *structural*, so a violation
+becomes a compile error and the adversarial verifier gets an objective answer.
 
 ## Install
 
@@ -26,7 +32,7 @@ A Claude Code plugin, straight from GitHub:
 1. **Write a detailed plan** as a markdown file — with Claude Code, Claude
    Desktop, or however you like. The more concrete the better.
 
-2. **Point double-shot at it:**
+2. **In Claude Code, point double-shot at it:**
 
    > *Use double-shot to implement `plan_xyz.md`*
 
