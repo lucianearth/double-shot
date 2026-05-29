@@ -12,7 +12,7 @@
   "plugins": [
     {
       "name": "double-shot",
-      "source": ".",
+      "source": "./",
       "displayName": "Double Shot",
       "description": "Take a plan/design doc to a built, tested, reviewed product in two phases (plan→blueprint, then blueprint→green) with a human feedback gate between. A skill orchestrates two bundled workflows.",
       "version": "0.1.0",
