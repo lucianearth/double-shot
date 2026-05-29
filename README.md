@@ -89,4 +89,5 @@ These came from real runs that built ~24k lines of verified code:
 
 ## License
 
-FSL-1.1-MIT — see the plugin manifest.
+Functional Source License, Version 1.1, with an MIT future license — converting
+to MIT three years after publication. See [LICENSE](LICENSE).
