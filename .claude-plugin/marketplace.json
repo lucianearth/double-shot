@@ -1,0 +1,33 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "double-shot",
+  "owner": {
+    "name": "Lucian Hymer",
+    "email": "lucian.hymer@gmail.com"
+  },
+  "metadata": {
+    "description": "Marketplace for the double-shot plugin — from a plan doc to a built product.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "double-shot",
+      "source": ".",
+      "displayName": "Double Shot",
+      "description": "Take a plan/design doc to a built, tested, reviewed product in two phases (plan→blueprint, then blueprint→green) with a human feedback gate between. A skill orchestrates two bundled workflows.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Lucian Hymer",
+        "email": "lucian.hymer@gmail.com"
+      },
+      "category": "productivity",
+      "keywords": [
+        "orchestration",
+        "workflows",
+        "agents",
+        "scaffolding",
+        "build-automation"
+      ]
+    }
+  ]
+}

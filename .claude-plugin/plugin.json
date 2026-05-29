@@ -1,0 +1,21 @@
+{
+  "name": "double-shot",
+  "displayName": "Double Shot",
+  "version": "0.1.0",
+  "description": "Take a plan/design doc all the way to a built, tested, reviewed product in two phases — plan→blueprint, then blueprint→build-to-green — with a human feedback gate between. A skill orchestrates two bundled workflows.",
+  "author": {
+    "name": "Lucian Hymer",
+    "email": "lucian.hymer@gmail.com"
+  },
+  "homepage": "https://github.com/lucianHymer/double-shot",
+  "repository": "https://github.com/lucianHymer/double-shot",
+  "license": "FSL-1.1-MIT",
+  "keywords": [
+    "orchestration",
+    "workflows",
+    "agents",
+    "scaffolding",
+    "build-automation",
+    "one-shot"
+  ]
+}
