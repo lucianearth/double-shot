@@ -4,7 +4,7 @@
 
 <h1 align="center">double-shot</h1>
 
-<p align="center"><em>Like one-shot, but better.</em></p>
+<p align="center"><em>Like one-shotting, but better.</em></p>
 
 ---
 
