@@ -40,7 +40,7 @@ That's it. The agent reads your plan, aligns with you on the open decisions,
 produces a blueprint and **stops to show you**, then — on your go — builds it
 to green and reports back with the diff.
 
-## Americano — the lighter pour
+## Americano — the watered-down double-shot
 
 Installing the plugin also gives you **`americano`** (`/americano`) — the same
 two-phase shape, watered down for an *already-aligned, bounded* change landing in
