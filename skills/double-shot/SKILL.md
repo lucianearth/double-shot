@@ -26,7 +26,7 @@ You are the **orchestrator**: you understand the plan, align with the user, and 
         │
 [you: show the user the blueprint + flagged risks]         ← FEEDBACK GATE (mandatory)
         │
-   PHASE 2 — build-from-blueprint (scaffold → build modules → green → review)
+   PHASE 2 — build-from-blueprint (scaffold → build modules → green → LIVE visual verify → review)
         │
 [you: verify on disk yourself, then report]                ← back to the user
 ```
@@ -37,8 +37,8 @@ You are the **orchestrator**: you understand the plan, align with the user, and 
 2. **Align on the forks the plan doesn't settle** — language/stack, scope, deployment target, anything genuinely the user's call. Ask (AskUserQuestion); don't guess. These become the workflow args. *(double-shot works for any stack, but shines when the plan has a **checkable invariant** — a core property the build can mechanically prove it preserved. **Rust is a great fit:** the type system can make the invariant structural, so a violation fails to compile and the adversarial verifier gets an objective answer. Surface this when it helps the user choose.)*
 3. **Phase 1 — plan-to-blueprint.** Invoke the workflow (see *Invoking* below) with `{ planPath, repoPath, stack, scope, constraints }`. It researches the toolchain, designs the hard subsystems, and writes a `BLUEPRINT.md`.
 4. **Gate (mandatory).** Show the user the blueprint plus the synthesis's flagged risks and open questions. **Wait for their approval/feedback.** Fold their answers in before building. This is the one place the human steers — never skip it.
-5. **Phase 2 — build-from-blueprint.** On the user's go, invoke the workflow with `{ blueprintPath, repoPath, envPrefix, buildCmd?, testCmd?, constraints }`. It spikes risky deps, builds the foundation and adversarially verifies the crown-jewel before fanning out, builds modules in disjoint-file waves (each adversarially verified + fix-looped), loops to green, then runs the adversarial security/correctness/simplification review + triage.
-6. **Verify on disk yourself.** Do **not** trust the workflow's self-report — re-run the build/tests yourself and confirm green. Then report with the diff, what was built, and **honest caveats** (deferred items, anything not fully sealed). Offer to commit (branch first if on the default branch).
+5. **Phase 2 — build-from-blueprint.** On the user's go, invoke the workflow with `{ blueprintPath, repoPath, envPrefix, buildCmd?, testCmd?, constraints }`. It spikes risky deps, builds the foundation and adversarially verifies the crown-jewel before fanning out, builds modules in disjoint-file waves (each adversarially verified + fix-looped), loops to green, then — **if the project has a UI** — runs the **Live phase**: serves the app, agent-browser **screenshots** every surface, and a **vision agent confirms it actually *renders*** (not just compiles), fix-looping visual defects a green suite cannot catch; then runs the adversarial security/correctness/simplification review + triage. (For the Live phase to fire, the blueprint/plan must yield an `fe_verify` recipe — how to serve the app + the surfaces to screenshot. If the build's plan didn't produce one, pass it via `constraints`.)
+6. **Verify on disk yourself.** Do **not** trust the workflow's self-report — re-run the build/tests yourself and confirm green. **For any UI, "verify" means running the app and LOOKING at it** (agent-browser screenshots at a mobile viewport first, then desktop) — a green suite, a clean type-check, and a perfect a11y tree all pass on a page whose content is *invisible*. Drive the real surfaces and confirm they render; fix what doesn't. Then report with the diff, what was built, and **honest caveats** (deferred items, anything not fully sealed). Offer to commit (branch first if on the default branch).
 
 ## Invoking the bundled workflows
 
@@ -61,6 +61,8 @@ If `${CLAUDE_SKILL_DIR}` isn't available, resolve this installed skill's absolut
 - **The gate is mandatory** — one human feedback gate, after the blueprint. The build phase then runs beginning-to-end without gates.
 - **No babysitting.** Workflows run in the background and notify on completion — don't poll. Parallelize freely.
 - **Spike risky deps first; verify the foundation before fanning out; keep heavy/optional pieces feature-gated** so the default build stays fast. (Baked into the workflows — honor them when you read results.)
+- **Green ≠ renders. For any UI, verification is visual + live.** A compiler, a type-check, an a11y tree, and a passing unit suite ALL pass on an invisible/broken page (a stuck animation, a duplicate-dependency context split, an unstyled or empty surface). The Live phase exists to catch exactly this — serve the app, screenshot every surface, have a vision agent confirm it *renders*, fix-loop. Never report FE "done" on tsc/green alone; never let the workflow do so either.
+- **In an autonomous / overnight run, finish IN-WINDOW.** When the user has delegated a long unattended build, the quiet window is exactly when to land the polish: run the live visual verification AND fix the low-risk review findings before handing back — don't defer them to a "review session." Deferring low-risk, well-specified cleanups defeats the point of an overnight delegation. (Pushing branch check-ins throughout is good; opening a PR / merging still needs the user's "go".)
 
 ## When NOT to use
 

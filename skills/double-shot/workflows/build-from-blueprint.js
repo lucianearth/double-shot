@@ -7,6 +7,7 @@ export const meta = {
     { title: 'Foundation', detail: 'scaffold + shared contracts + Wave-0 module; adversarially verify the crown-jewel invariant' },
     { title: 'Modules', detail: 'waves of disjoint modules: impl -> adversarial verify -> bounded fix loop' },
     { title: 'Green', detail: 'integrate; loop build+test until fully green' },
+    { title: 'Live', detail: 'IF the project has a UI: serve it live + agent-browser SCREENSHOT every surface; a vision agent confirms it actually RENDERS (green != renders); fix-loop visual defects; re-green' },
     { title: 'Review', detail: 'adversarial security/correctness/simplification -> triage + fix high-sev -> re-verify green' },
   ],
 }
@@ -49,6 +50,19 @@ const PLAN_SCHEMA = {
         required: ['wave', 'modules'],
       },
     },
+    fe_verify: {
+      type: 'object', additionalProperties: false,
+      description: 'PRESENT IFF the project has a user-facing UI: how to run it LIVE + the surfaces to screenshot-verify. OMIT entirely for a non-UI project (the Live phase is then skipped).',
+      properties: {
+        serve_cmd: { type: 'string', description: 'Command that starts the app live (a dev server / preview), backgroundable.' },
+        backend: { type: 'string', description: 'How to bring up any backend / seed the data the UI needs to render real surfaces (or empty if none).' },
+        ready_check: { type: 'string', description: 'How to know it is up: a URL that 200s, a log line, a listening port.' },
+        base_url: { type: 'string', description: 'The base URL the served app is reachable at (e.g. http://localhost:3000).' },
+        routes: { type: 'array', description: 'The surfaces to open + screenshot + VISUALLY verify.', items: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, expect: { type: 'string', description: 'What MUST be visible + correctly styled here (so the vision agent has a concrete target).' } }, required: ['path', 'expect'] } },
+        flows: { type: 'array', items: { type: 'string' }, description: 'Key interactive flows to drive + screenshot (or empty).' },
+      },
+      required: ['serve_cmd', 'ready_check', 'base_url', 'routes'],
+    },
   },
   required: ['build_cmd', 'test_cmd', 'env_prefix', 'foundation', 'crown_jewel', 'risky_deps', 'waves'],
 }
@@ -56,10 +70,11 @@ const STATUS = { type: 'object', additionalProperties: false, properties: { ok: 
 const VERDICT = { type: 'object', additionalProperties: false, properties: { pass: { type: 'boolean' }, blocking_issues: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } }, required: ['pass', 'blocking_issues', 'notes'] }
 const GREEN = { type: 'object', additionalProperties: false, properties: { green: { type: 'boolean' }, summary: { type: 'string' }, remaining_failures: { type: 'array', items: { type: 'string' } } }, required: ['green', 'summary', 'remaining_failures'] }
 const FINDINGS = { type: 'object', additionalProperties: false, properties: { dimension: { type: 'string' }, findings: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { severity: { type: 'string' }, title: { type: 'string' }, location: { type: 'string' }, detail: { type: 'string' }, suggested_fix: { type: 'string' } }, required: ['severity', 'title', 'location', 'detail', 'suggested_fix'] } }, summary: { type: 'string' } }, required: ['dimension', 'findings', 'summary'] }
+const FE_VERDICT = { type: 'object', additionalProperties: false, properties: { ran_live: { type: 'boolean' }, surfaces: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { route: { type: 'string' }, renders_correctly: { type: 'boolean' }, screenshot_path: { type: 'string' }, defects: { type: 'array', items: { type: 'string' } } }, required: ['route', 'renders_correctly', 'screenshot_path', 'defects'] } }, fixes_applied: { type: 'array', items: { type: 'string' } }, stayed_green: { type: 'boolean' }, notes: { type: 'string' } }, required: ['ran_live', 'surfaces', 'fixes_applied', 'stayed_green', 'notes'] }
 
 phase('Plan')
 const plan = await agent(
-  `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). Produce a concrete build plan: the build command + test command (hints: build=${buildCmdHint}, test=${testCmdHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the foundation (scaffold + shared contracts / Wave-0 module to build and FREEZE first); the crown-jewel (the security-critical or core-invariant component to verify hardest, plus the exact invariant); any risky external deps/toolchain that need an up-front spike before building; and the ordered build WAVES. DEFAULT TO SERIAL — most projects are a near-linear dependency chain, so prefer fewer, coarser modules built one at a time (a single agent can implement several small, related files in sequence). Split a wave into PARALLEL modules ONLY when they are genuinely independent (disjoint files, no compile-time dependency between them in that wave) AND each is large/self-contained enough that giving it its own focused agent context beats one agent doing them in sequence — here parallelism buys context isolation more than wall-clock (e.g. a single-crate build shares one target-dir lock, so concurrent builds mostly serialize). For each module give owned path-globs, the blueprint sections it implements, and machine-checkable acceptance criteria; modules sharing a wave MUST own disjoint files. Constraints: ${constraints}. Return structured.`,
+  `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). Produce a concrete build plan: the build command + test command (hints: build=${buildCmdHint}, test=${testCmdHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the foundation (scaffold + shared contracts / Wave-0 module to build and FREEZE first); the crown-jewel (the security-critical or core-invariant component to verify hardest, plus the exact invariant); any risky external deps/toolchain that need an up-front spike before building; and the ordered build WAVES. DEFAULT TO SERIAL — most projects are a near-linear dependency chain, so prefer fewer, coarser modules built one at a time (a single agent can implement several small, related files in sequence). Split a wave into PARALLEL modules ONLY when they are genuinely independent (disjoint files, no compile-time dependency between them in that wave) AND each is large/self-contained enough that giving it its own focused agent context beats one agent doing them in sequence — here parallelism buys context isolation more than wall-clock (e.g. a single-crate build shares one target-dir lock, so concurrent builds mostly serialize). For each module give owned path-globs, the blueprint sections it implements, and machine-checkable acceptance criteria; modules sharing a wave MUST own disjoint files. ALSO: if the project has a USER-FACING UI, produce \`fe_verify\` — how to serve it LIVE (serve_cmd + any backend/seed bring-up + a ready_check), the base_url, the routes/surfaces to screenshot-verify (each with what MUST be visible), and key flows — so a live VISUAL check can run (compile-green never proves a page actually renders). OMIT \`fe_verify\` for a non-UI project. Constraints: ${constraints}. Return structured.`,
   { label: 'plan-build', phase: 'Plan', agentType: 'general-purpose', schema: PLAN_SCHEMA })
 
 const ENV = plan.env_prefix || envPrefix
@@ -115,6 +130,17 @@ while (!green && round < 4) {
   green = integ.green
 }
 
+phase('Live')
+let live = null
+if (plan.fe_verify && plan.fe_verify.routes && plan.fe_verify.routes.length) {
+  const fe = plan.fe_verify
+  live = await agent(
+    `LIVE FRONT-END VERIFICATION. The unit gate (\`${ENV} ${T}\`) is GREEN — but GREEN != RENDERS CORRECTLY. A type-checked, a11y-perfect, fully-tested page can still be VISUALLY BROKEN at runtime: invisible content (a stuck animation / opacity:0, a duplicate-dependency context split), an unstyled / overlapping / off-screen surface, an error boundary, or an empty state where content should be. NONE of that is catchable by a compiler, a type-check, an a11y tree, or a unit test — the ONLY way is to RUN the app and LOOK at the pixels. Do exactly that; never infer "it renders" from the code.\n1. Bring up the live stack: \`${ENV} ${fe.serve_cmd}\` in the BACKGROUND${fe.backend ? ('; also bring up the backend / seed the data it needs: ' + fe.backend) : ''}; wait until it is up (${fe.ready_check}).\n2. Ensure agent-browser is available (it drives real Chrome + returns SCREENSHOTS; install it per the repo's front-end guide if missing). If it genuinely cannot be installed, set ran_live=false and say so — do NOT fake this step.\n3. For EACH route in ${JSON.stringify(fe.routes)} (and each flow in ${JSON.stringify(fe.flows || [])}): set a MOBILE viewport FIRST, agent-browser open \`${fe.base_url}<path>\`, take a SCREENSHOT to a file, and READ that screenshot image yourself — you are vision-capable. Judge it against ${blueprintPath} + the route's "expect": is the primary content actually VISIBLE and styled? anything invisible / transparent / zero-height / overlapping / unstyled / off-screen / errored / wrongly-empty? Then repeat at a desktop viewport.\n4. For EVERY visual defect: find the ROOT CAUSE (a runtime / CSS / bundling / dependency-context bug, NOT a test) and FIX it in the app code; rebuild + RE-SCREENSHOT to confirm it now renders. Loop until every listed surface renders correctly.\n5. Re-run \`${ENV} ${T}\` — it MUST stay GREEN after your fixes (never weaken a test to pass).\nRepo: ${repoPath}. Report per-surface renders_correctly + the screenshot_path you actually inspected + defects; the fixes applied; and stayed_green. NEVER mark a surface verified without a screenshot you personally looked at.`,
+    { label: 'live-fe-verify', phase: 'Live', agentType: 'general-purpose', schema: FE_VERDICT })
+} else {
+  log('Live: no fe_verify recipe in the plan (no UI surfaces to verify) — skipping the live screenshot review.')
+}
+
 phase('Review')
 const dims = [
   { k: 'security', p: `ADVERSARIAL SECURITY REVIEW. Focus on the crown jewel (${plan.crown_jewel}) and every trust/authz boundary. Try to get past it; scrutinize error paths, logs, and counts for leaks. Try to write a test that breaches it.` },
@@ -139,6 +165,7 @@ return {
   foundation_ok: foundation && foundation.ok,
   modules: built,
   integrate_green: green,
+  live,
   review_findings: allF,
   must_fix: mustFix.length,
   final_green: triage ? triage.green : green,
