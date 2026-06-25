@@ -53,9 +53,6 @@ for **americano** when the design's already settled and the change is bounded.
 The axis is *how much rigor the change warrants* — double-shot is great in mature
 repos too.
 
-> Dogfooded: `americano-build` took a real, no-merge-invariant-adjacent feature
-> to a **505-test green** autonomously, and the adversarial review caught a
-> genuine cross-user bug it then fixed.
 
 ## License
 
