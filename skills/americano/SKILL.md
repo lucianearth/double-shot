@@ -40,7 +40,7 @@ The axis is **how much rigor the change warrants**, NOT brownfield-vs-greenfield
         │
 [you: show the user the outline + the critique's must-fixes + flagged judgment calls]   ← FEEDBACK GATE (mandatory)
         │   ← the user may CLEAR CONTEXT here; the doc is the whole hand-off
-   PHASE 2 — americano-build  (green baseline → build waves → loop to green → review)   ← on a feature branch
+   PHASE 2 — americano-build  (green baseline → build waves → loop to green → review)   ← on a feature branch, checkpointed to origin throughout
         │
 [you: verify on disk yourself, then report]
 ```
@@ -51,8 +51,8 @@ The axis is **how much rigor the change warrants**, NOT brownfield-vs-greenfield
 2. **Scope Phase 1 inline.** From the conversation + a quick repo skim, derive the **researchTargets** (subsystems a build must get right — confirm-not-explore), the **designDimensions** (one per orthogonal piece), the **invariants** the design must not violate, and the **outDoc** (`docs/<feature>-plan-v1.md`). This inline scouting is what keeps Phase 1 light — don't make the workflow rediscover the design.
 3. **Phase 1 — americano-plan.** Invoke the bundled workflow (see *Invoking*) with those args. It writes the build-ready blueprint and returns the outline + must-fix list + flagged judgment calls.
 4. **Gate (mandatory).** Show the user the outline + the critique's **must-fixes** + any judgment calls. Separate the mechanical must-fixes (already folded into the doc) from genuine human decisions. Fold their answers into the doc. The user may clear context after this — the doc stands alone.
-5. **Branch, then Phase 2 — americano-build.** Ensure you're on a feature branch (NOT the default). Invoke the build workflow on the doc. It confirms the repo is green at HEAD, builds the waves (each adversarially verified + bounded-fix-looped), loops to green via the repo's own gate, then runs the adversarial review + triage.
-6. **Verify on disk yourself.** Don't trust the self-report — re-run the gate, confirm green, report with the diff + honest caveats. Offer to commit/PR.
+5. **Branch + upstream, then Phase 2 — americano-build.** Ensure you're on a feature branch (NOT the default) with an `origin` upstream (`git push -u origin HEAD`) so the build can checkpoint to the remote. Invoke the build workflow on the doc. It confirms the repo is green at HEAD, builds the waves (each adversarially verified + bounded-fix-looped), loops to green via the repo's own gate, then runs the adversarial review + triage — **committing + pushing a WIP checkpoint to the branch at every barrier** (each wave, green, final) so a crash/OOM mid-run never loses work. (On by default; `checkpoint: false` disables, `checkpointRemote` overrides `origin`.)
+6. **Verify on disk yourself.** Don't trust the self-report — re-run the gate, confirm green, report with the diff + honest caveats. The branch is already checkpointed to `origin`; commit + push anything *you* fixed during verification, then offer to **open a PR** (still the user's call).
 
 ## Invoking the workflows
 
@@ -76,6 +76,7 @@ Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/americano-build.js",
 - **You orchestrate; the workflows do the work.** Scout, scope args, gate, read results — keep your context clean.
 - **The bound is your inline scouting.** Phase 1 stays light because YOU front-load the targets/dimensions/invariants from the already-aligned design.
 - **Green-in, green-out.** americano-build assumes the repo is green at HEAD and refuses to build on red — fix the baseline first.
+- **Dedicated branch; checkpoint to origin throughout.** Never build on the default branch. Branch + set an `origin` upstream before Phase 2; the build commits + pushes a WIP checkpoint at every barrier so a crash/OOM can't lose work. Checkpoints are WIP only — opening a PR / merging still needs the user's go.
 - **The gate is mandatory; the build runs gateless.** One human steer, after the blueprint.
 - **Clean-context handoff is a feature.** The blueprint must stand alone so the user can clear context and build fresh.
 - **Know when to escalate.** Bounded got big? Switch to double-shot mid-stream.

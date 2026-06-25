@@ -27,6 +27,7 @@ const styleRef = a.styleRef ? `Match the structure/voice of the existing plan do
 
 if (!researchTargets.length || !designDimensions.length) {
   log('americano-plan: args.researchTargets[] and args.designDimensions[] are required. Aborting.')
+  // @ts-expect-error top-level return — the Workflow runtime wraps this script body in an async function
   return { error: 'missing researchTargets/designDimensions' }
 }
 
@@ -60,4 +61,5 @@ const summary = await agent(
   `Write a BUILD-READY blueprint for "${feature}" by combining the research, designs, and adversarial critique below. WRITE IT to ${repoPath}/${outDoc} with the Write tool. ${styleRef} It must let a FRESH-CONTEXT build agent execute it cold (it is the hand-off; the user may clear context before building). Required sections:\n1. Motivation & what it changes.\n2. Invariants to preserve (one line each) — fold the critique's BLOCKERS in as hard constraints.\n3..N. One section per design dimension — the concrete design + exact touch-points (file:line).\n- DB migrations (if any) + their safety.\n- Build plan: ORDERED waves/work-items with dependencies (the module DAG the build engine consumes), each with machine-checkable acceptance criteria.\n- Test plan: the new tests + the repo's existing green-gate command.\n- Risks (from the critique) + Out-of-scope (with reasons) + any JUDGMENT CALLS the human should decide at the gate.\nAfter writing the file, RETURN: the doc path, a bullet outline of the sections, the critique's must-fix list VERBATIM, and any flagged judgment calls.\n\nINVARIANTS:\n${invariants}\n\nRESEARCH:\n${researchBlob}\n\nDESIGNS:\n${designsBlob}\n\nCRITIQUE:\n${critique}`,
   { label: 'synthesize', phase: 'Synthesize', effort: 'high' })
 
+// @ts-expect-error top-level return — the Workflow runtime wraps this script body in an async function
 return { doc: outDoc, summary }

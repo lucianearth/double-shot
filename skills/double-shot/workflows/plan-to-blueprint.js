@@ -115,4 +115,5 @@ const blueprint = await agent(
   `Constraints to honor: ${constraints}\n\n=== RESEARCH ===\n${researchBrief}\n\n=== DESIGNS ===\n${designBrief}`,
   { label: 'synthesize:blueprint', phase: 'Synthesize', agentType: 'general-purpose', schema: BLUEPRINT_SCHEMA })
 
+// @ts-expect-error top-level return — the Workflow runtime wraps this script body in an async function
 return blueprint

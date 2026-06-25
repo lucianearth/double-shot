@@ -1,0 +1,12 @@
+{
+  "name": "double-shot",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev tooling for the double-shot plugin. The plugin itself ships no runtime deps; this only powers type-checking the workflow scripts.",
+  "scripts": {
+    "typecheck": "tsc -p skills/double-shot/workflows/jsconfig.json && tsc -p skills/americano/workflows/jsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

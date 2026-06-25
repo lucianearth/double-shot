@@ -9,10 +9,11 @@ export const meta = {
     { title: 'Green', detail: 'integrate; loop build+test until fully green' },
     { title: 'Live', detail: 'IF the project has a UI: serve it live + agent-browser SCREENSHOT every surface; a vision agent confirms it actually RENDERS (green != renders); fix-loop visual defects; re-green' },
     { title: 'Review', detail: 'adversarial security/correctness/simplification -> triage + fix high-sev -> re-verify green' },
+    { title: 'Checkpoint', detail: 'commit + push WIP to the feature branch at every barrier so an OOM/crash never loses work (no PR, no merge)' },
   ],
 }
 
-// args: { blueprintPath (required), repoPath?, buildCmd?, testCmd?, envPrefix?, constraints? }
+// args: { blueprintPath (required), repoPath?, buildCmd?, testCmd?, envPrefix?, constraints?, checkpoint?, checkpointRemote? }
 // Some harnesses deliver `args` as a JSON string rather than a parsed object; normalize either way.
 const A = (typeof args === 'string') ? JSON.parse(args) : (args || {})
 const blueprintPath = A.blueprintPath
@@ -21,6 +22,8 @@ const envPrefix = A.envPrefix || ''          // e.g. 'export PATH="$HOME/.cargo/
 const buildCmdHint = A.buildCmd || 'auto-detect from the blueprint/repo'
 const testCmdHint = A.testCmd || 'auto-detect from the blueprint/repo'
 const constraints = A.constraints || 'none beyond the blueprint'
+const CKPT = A.checkpoint !== false                 // WIP checkpointing default ON; pass checkpoint:false to disable
+const CKPT_REMOTE = A.checkpointRemote || 'origin'  // remote to push WIP checkpoints to
 if (!blueprintPath) throw new Error('args.blueprintPath is required (absolute path to the blueprint)')
 
 const PLAN_SCHEMA = {
@@ -80,6 +83,24 @@ const plan = await agent(
 const ENV = plan.env_prefix || envPrefix
 const B = plan.build_cmd, T = plan.test_cmd
 
+// --- WIP checkpointing: commit + push to a feature branch at safe barriers, so an OOM/crash mid-build never loses work ---
+const CKPT_SCHEMA = { type: 'object', additionalProperties: false, properties: { committed: { type: 'boolean' }, pushed: { type: 'boolean' }, branch: { type: 'string' }, note: { type: 'string' } }, required: ['committed', 'pushed', 'branch', 'note'] }
+async function checkpoint(stage) {
+  if (!CKPT) return null
+  try {
+    return await agent(
+      `WIP CHECKPOINT so an OOM/crash can't lose the work in progress. In repo ${repoPath}:\n` +
+      `1. Confirm you are on a NON-default feature branch. ONLY if you are on the default branch (main/master), create + switch to a feature branch named for this build FIRST — never commit build WIP onto the default branch.\n` +
+      `2. \`git add -A\`, then commit: "checkpoint(${stage}): <one-line summary of progress so far>". If nothing is staged, skip the commit.\n` +
+      `3. Push to ${CKPT_REMOTE}, setting upstream on first push: \`git push -u ${CKPT_REMOTE} HEAD\`.\n` +
+      `This is a safety checkpoint ONLY: do NOT open a PR, do NOT merge, do NOT touch the default branch. If ${CKPT_REMOTE} is missing or unreachable, still commit locally and report pushed=false with the reason — NEVER fail, block, or revert the build because of a git error.${ENV ? (' Shell prefix: ' + ENV) : ''} Report what you committed and whether you pushed.`,
+      { label: `checkpoint:${stage}`, phase: 'Checkpoint', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: CKPT_SCHEMA })
+  } catch (e) {
+    log(`Checkpoint(${stage}) errored (non-fatal): ${e && e.message ? e.message : e}`)
+    return null
+  }
+}
+
 if (plan.risky_deps && plan.risky_deps.length) {
   await parallel(plan.risky_deps.map((d) => () => agent(
     `Up-front SPIKE to de-risk "${d}" before any real build (per ${blueprintPath}). Actually try it — build a throwaway probe, hit the real API/toolchain in THIS environment; do NOT decide from memory. Report whether it works here, the exact working recipe, and any blocker + the fallback the blueprint names. ${ENV ? ('Shell prefix: ' + ENV) : ''}`,
@@ -96,6 +117,7 @@ let fverdict = await agent(
 if (!fverdict.pass) {
   foundation = await agent(`Fix the foundation; close every issue: ${JSON.stringify(fverdict.blocking_issues)}. Per ${blueprintPath}. Re-run \`${ENV} ${B} && ${T}\`. Report.`, { label: 'fix:foundation', phase: 'Foundation', agentType: 'general-purpose', schema: STATUS })
 }
+await checkpoint('foundation')
 
 async function buildModule(m) {
   let impl = await agent(
@@ -118,6 +140,7 @@ const built = []
 for (const w of (plan.waves || [])) {               // waves are ordered (barrier between); modules within a wave run in parallel on disjoint files
   const r = await parallel((w.modules || []).map((m) => () => buildModule(m)))
   built.push(...r.filter(Boolean))
+  await checkpoint('wave-' + w.wave)                // the barrier between waves is the safe point to commit + push
 }
 
 phase('Green')
@@ -129,6 +152,7 @@ while (!green && round < 4) {
     { label: `integrate#${round}`, phase: 'Green', agentType: 'general-purpose', schema: GREEN })
   green = integ.green
 }
+await checkpoint('green')
 
 phase('Live')
 let live = null
@@ -160,6 +184,9 @@ if (mustFix.length) {
     { label: 'triage+fix', phase: 'Review', agentType: 'general-purpose', schema: GREEN })
 }
 
+const finalCkpt = await checkpoint('final')        // capture Live + Review fixes on the branch (still no PR / merge)
+
+// @ts-expect-error top-level return — the Workflow runtime wraps this script body in an async function
 return {
   build_cmd: B, test_cmd: T,
   foundation_ok: foundation && foundation.ok,
@@ -169,4 +196,6 @@ return {
   review_findings: allF,
   must_fix: mustFix.length,
   final_green: triage ? triage.green : green,
+  checkpointed: CKPT,
+  final_checkpoint: finalCkpt,
 }
