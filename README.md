@@ -23,7 +23,7 @@ becomes a compile error and the adversarial verifier gets an objective answer.
 A Claude Code plugin, straight from GitHub:
 
 ```
-/plugin marketplace add lucianHymer/double-shot
+/plugin marketplace add lucianearth/double-shot
 /plugin install double-shot@double-shot
 ```
 
