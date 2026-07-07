@@ -24,6 +24,12 @@ const testCmdHint = A.testCmd || 'auto-detect from the blueprint/repo'
 const constraints = A.constraints || 'none beyond the blueprint'
 const CKPT = A.checkpoint !== false                 // WIP checkpointing default ON; pass checkpoint:false to disable
 const CKPT_REMOTE = A.checkpointRemote || 'origin'  // remote to push WIP checkpoints to
+// Model tiers — every agent() call is pinned to one of two args-overridable tiers so a fan-out never
+// silently inherits an expensive main-loop model. Defaults: grunt='sonnet'; heavy=undefined (inherit —
+// set models:{heavy:'opus'} when orchestrating from a pricier main-loop model).
+const M = A.models || {}                 // { grunt?: string, heavy?: string }
+const GRUNT = ('grunt' in M) ? M.grunt : 'sonnet'
+const HEAVY = M.heavy
 if (!blueprintPath) throw new Error('args.blueprintPath is required (absolute path to the blueprint)')
 
 const PLAN_SCHEMA = {
@@ -78,7 +84,7 @@ const FE_VERDICT = { type: 'object', additionalProperties: false, properties: { 
 phase('Plan')
 const plan = await agent(
   `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). Produce a concrete build plan: the build command + test command (hints: build=${buildCmdHint}, test=${testCmdHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the foundation (scaffold + shared contracts / Wave-0 module to build and FREEZE first); the crown-jewel (the security-critical or core-invariant component to verify hardest, plus the exact invariant); any risky external deps/toolchain that need an up-front spike before building; and the ordered build WAVES. DEFAULT TO SERIAL — most projects are a near-linear dependency chain, so prefer fewer, coarser modules built one at a time (a single agent can implement several small, related files in sequence). Split a wave into PARALLEL modules ONLY when they are genuinely independent (disjoint files, no compile-time dependency between them in that wave) AND each is large/self-contained enough that giving it its own focused agent context beats one agent doing them in sequence — here parallelism buys context isolation more than wall-clock (e.g. a single-crate build shares one target-dir lock, so concurrent builds mostly serialize). For each module give owned path-globs, the blueprint sections it implements, and machine-checkable acceptance criteria; modules sharing a wave MUST own disjoint files. ALSO: if the project has a USER-FACING UI, produce \`fe_verify\` — how to serve it LIVE (serve_cmd + any backend/seed bring-up + a ready_check), the base_url, the routes/surfaces to screenshot-verify (each with what MUST be visible), and key flows — so a live VISUAL check can run (compile-green never proves a page actually renders). OMIT \`fe_verify\` for a non-UI project. Constraints: ${constraints}. Return structured.`,
-  { label: 'plan-build', phase: 'Plan', agentType: 'general-purpose', schema: PLAN_SCHEMA })
+  { label: 'plan-build', phase: 'Plan', agentType: 'general-purpose', model: HEAVY, schema: PLAN_SCHEMA })
 
 const ENV = plan.env_prefix || envPrefix
 const B = plan.build_cmd, T = plan.test_cmd
@@ -94,7 +100,7 @@ async function checkpoint(stage) {
       `2. \`git add -A\`, then commit: "checkpoint(${stage}): <one-line summary of progress so far>". If nothing is staged, skip the commit.\n` +
       `3. Push to ${CKPT_REMOTE}, setting upstream on first push: \`git push -u ${CKPT_REMOTE} HEAD\`.\n` +
       `This is a safety checkpoint ONLY: do NOT open a PR, do NOT merge, do NOT touch the default branch. If ${CKPT_REMOTE} is missing or unreachable, still commit locally and report pushed=false with the reason — NEVER fail, block, or revert the build because of a git error.${ENV ? (' Shell prefix: ' + ENV) : ''} Report what you committed and whether you pushed.`,
-      { label: `checkpoint:${stage}`, phase: 'Checkpoint', agentType: 'general-purpose', model: 'sonnet', effort: 'low', schema: CKPT_SCHEMA })
+      { label: `checkpoint:${stage}`, phase: 'Checkpoint', agentType: 'general-purpose', model: GRUNT, effort: 'low', schema: CKPT_SCHEMA })
   } catch (e) {
     log(`Checkpoint(${stage}) errored (non-fatal): ${e && e.message ? e.message : e}`)
     return null
@@ -104,33 +110,33 @@ async function checkpoint(stage) {
 if (plan.risky_deps && plan.risky_deps.length) {
   await parallel(plan.risky_deps.map((d) => () => agent(
     `Up-front SPIKE to de-risk "${d}" before any real build (per ${blueprintPath}). Actually try it — build a throwaway probe, hit the real API/toolchain in THIS environment; do NOT decide from memory. Report whether it works here, the exact working recipe, and any blocker + the fallback the blueprint names. ${ENV ? ('Shell prefix: ' + ENV) : ''}`,
-    { label: `spike:${d}`, phase: 'Plan', agentType: 'general-purpose', schema: STATUS })))
+    { label: `spike:${d}`, phase: 'Plan', agentType: 'general-purpose', model: HEAVY, schema: STATUS })))
 }
 
 phase('Foundation')
 let foundation = await agent(
   `Scaffold the project and build the FOUNDATION per ${blueprintPath}: ${plan.foundation}. Create the workspace/skeleton + ALL module stubs + the shared contracts so the dependency graph compiles and later modules only fill in their OWN files (never the shared manifest/contracts). Then fully implement the foundation/shared-contract module. Run \`${ENV} ${B}\` (must compile) + the foundation's tests; fix until green. Repo: ${repoPath}.`,
-  { label: 'foundation', phase: 'Foundation', agentType: 'general-purpose', schema: STATUS })
+  { label: 'foundation', phase: 'Foundation', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
 let fverdict = await agent(
   `Adversarially verify the foundation — especially the CROWN JEWEL: ${plan.crown_jewel}. Try to BREAK the stated invariant: write throwaway code that SHOULD be impossible — in a typed/compiled language, code that MUST FAIL TO COMPILE (confirm it does); otherwise, an input or sequence that MUST BE REJECTED at runtime (confirm it is, via a test). Run \`${ENV} ${T}\` for the foundation. Return pass=false with specifics if the invariant can be violated or the foundation is incomplete.`,
-  { label: 'verify:foundation', phase: 'Foundation', agentType: 'general-purpose', schema: VERDICT })
+  { label: 'verify:foundation', phase: 'Foundation', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })
 if (!fverdict.pass) {
-  foundation = await agent(`Fix the foundation; close every issue: ${JSON.stringify(fverdict.blocking_issues)}. Per ${blueprintPath}. Re-run \`${ENV} ${B} && ${T}\`. Report.`, { label: 'fix:foundation', phase: 'Foundation', agentType: 'general-purpose', schema: STATUS })
+  foundation = await agent(`Fix the foundation; close every issue: ${JSON.stringify(fverdict.blocking_issues)}. Per ${blueprintPath}. Re-run \`${ENV} ${B} && ${T}\`. Report.`, { label: 'fix:foundation', phase: 'Foundation', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
 }
 await checkpoint('foundation')
 
 async function buildModule(m) {
   let impl = await agent(
     `Implement module "${m.name}" per ${blueprintPath} ${m.blueprint_secs}. It owns ONLY these paths: ${m.path_globs} — do not touch other modules' files. Acceptance: ${m.acceptance}. The shared contracts are frozen — build against them. Run \`${ENV} ${B}\` and the module's tests; fix until green. Never stub/delete tests to pass.`,
-    { label: `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', schema: STATUS })
+    { label: `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
   let v = await agent(
     `Adversarially verify module "${m.name}" vs ${blueprintPath} ${m.blueprint_secs} and acceptance: ${m.acceptance}. Hunt for incompleteness, bugs, unsafety, blueprint divergence, and trivially-passing tests. Run \`${ENV} ${T}\` for it. pass=false with concrete issues if wrong.`,
-    { label: `verify:${m.name}`, phase: 'Modules', agentType: 'general-purpose', schema: VERDICT })
+    { label: `verify:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })
   let r = 0
   while (!v.pass && r < 2) {
     r++
-    impl = await agent(`Fix module "${m.name}": ${JSON.stringify(v.blocking_issues)}. Per ${blueprintPath} ${m.blueprint_secs}. Re-run build+test. Report.`, { label: `fix:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', schema: STATUS })
-    v = await agent(`Re-verify "${m.name}" (same adversarial protocol). Run \`${ENV} ${T}\`. Verdict.`, { label: `reverify:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', schema: VERDICT })
+    impl = await agent(`Fix module "${m.name}": ${JSON.stringify(v.blocking_issues)}. Per ${blueprintPath} ${m.blueprint_secs}. Re-run build+test. Report.`, { label: `fix:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
+    v = await agent(`Re-verify "${m.name}" (same adversarial protocol). Run \`${ENV} ${T}\`. Verdict.`, { label: `reverify:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })
   }
   return { module: m.name, ok: impl && impl.ok, passed: v && v.pass }
 }
@@ -149,7 +155,7 @@ while (!green && round < 4) {
   round++
   integ = await agent(
     `Integration round ${round}: run \`${ENV} ${B}\` then \`${ENV} ${T}\` across the whole project. Fix any CROSS-MODULE failures (wiring, trait/interface mismatches, deps, features) per ${blueprintPath}. NEVER weaken the crown-jewel invariant or delete/ignore tests to go green — fix the real cause. Report green=true ONLY if build + tests are fully green; list remaining failures.`,
-    { label: `integrate#${round}`, phase: 'Green', agentType: 'general-purpose', schema: GREEN })
+    { label: `integrate#${round}`, phase: 'Green', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
   green = integ.green
 }
 await checkpoint('green')
@@ -160,7 +166,7 @@ if (plan.fe_verify && plan.fe_verify.routes && plan.fe_verify.routes.length) {
   const fe = plan.fe_verify
   live = await agent(
     `LIVE FRONT-END VERIFICATION. The unit gate (\`${ENV} ${T}\`) is GREEN — but GREEN != RENDERS CORRECTLY. A type-checked, a11y-perfect, fully-tested page can still be VISUALLY BROKEN at runtime: invisible content (a stuck animation / opacity:0, a duplicate-dependency context split), an unstyled / overlapping / off-screen surface, an error boundary, or an empty state where content should be. NONE of that is catchable by a compiler, a type-check, an a11y tree, or a unit test — the ONLY way is to RUN the app and LOOK at the pixels. Do exactly that; never infer "it renders" from the code.\n1. Bring up the live stack: \`${ENV} ${fe.serve_cmd}\` in the BACKGROUND${fe.backend ? ('; also bring up the backend / seed the data it needs: ' + fe.backend) : ''}; wait until it is up (${fe.ready_check}).\n2. Ensure agent-browser is available (it drives real Chrome + returns SCREENSHOTS; install it per the repo's front-end guide if missing). If it genuinely cannot be installed, set ran_live=false and say so — do NOT fake this step.\n3. For EACH route in ${JSON.stringify(fe.routes)} (and each flow in ${JSON.stringify(fe.flows || [])}): set a MOBILE viewport FIRST, agent-browser open \`${fe.base_url}<path>\`, take a SCREENSHOT to a file, and READ that screenshot image yourself — you are vision-capable. Judge it against ${blueprintPath} + the route's "expect": is the primary content actually VISIBLE and styled? anything invisible / transparent / zero-height / overlapping / unstyled / off-screen / errored / wrongly-empty? Then repeat at a desktop viewport.\n4. For EVERY visual defect: find the ROOT CAUSE (a runtime / CSS / bundling / dependency-context bug, NOT a test) and FIX it in the app code; rebuild + RE-SCREENSHOT to confirm it now renders. Loop until every listed surface renders correctly.\n5. Re-run \`${ENV} ${T}\` — it MUST stay GREEN after your fixes (never weaken a test to pass).\nRepo: ${repoPath}. Report per-surface renders_correctly + the screenshot_path you actually inspected + defects; the fixes applied; and stayed_green. NEVER mark a surface verified without a screenshot you personally looked at.`,
-    { label: 'live-fe-verify', phase: 'Live', agentType: 'general-purpose', schema: FE_VERDICT })
+    { label: 'live-fe-verify', phase: 'Live', agentType: 'general-purpose', model: GRUNT, schema: FE_VERDICT })
 } else {
   log('Live: no fe_verify recipe in the plan (no UI surfaces to verify) — skipping the live screenshot review.')
 }
@@ -173,7 +179,7 @@ const dims = [
 ]
 const reviews = await parallel(dims.map((d) => () => agent(
   `${d.p}\nRead the code under ${repoPath} and ${blueprintPath}. Run \`${ENV} ${T}\` if useful. Report findings with severity + location + suggested_fix.`,
-  { label: `review:${d.k}`, phase: 'Review', agentType: 'general-purpose', model: d.k === 'simplify' ? 'sonnet' : undefined, schema: FINDINGS })))
+  { label: `review:${d.k}`, phase: 'Review', agentType: 'general-purpose', model: d.k === 'simplify' ? GRUNT : HEAVY, schema: FINDINGS })))
 const allF = reviews.filter(Boolean).flatMap((r) => (r.findings || []).map((f) => ({ ...f, dimension: r.dimension })))
 const mustFix = allF.filter((f) => f.severity === 'critical' || f.severity === 'high')
 
@@ -181,7 +187,7 @@ let triage = null
 if (mustFix.length) {
   triage = await agent(
     `Triage + fix the confirmed high-severity findings: CONFIRM each is real first (reproduce/inspect); fix real ones minimally per ${blueprintPath}; reject false positives with reasons. Then run \`${ENV} ${T}\` — must be GREEN; never delete a test to pass. Do NOT apply medium/low/simplification findings unless trivially safe.\nFindings:\n${mustFix.map((f, i) => `${i + 1}. [${f.severity}/${f.dimension}] ${f.title} @ ${f.location}: ${f.detail} | fix: ${f.suggested_fix}`).join('\n')}`,
-    { label: 'triage+fix', phase: 'Review', agentType: 'general-purpose', schema: GREEN })
+    { label: 'triage+fix', phase: 'Review', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
 }
 
 const finalCkpt = await checkpoint('final')        // capture Live + Review fixes on the branch (still no PR / merge)

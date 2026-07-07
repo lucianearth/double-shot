@@ -46,10 +46,12 @@ The two workflow scripts are bundled **inside this skill's own directory**, unde
 
 ```
 Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/plan-to-blueprint.js",
-           args: { planPath, repoPath, stack, scope, constraints } })
+           args: { planPath, repoPath, stack, scope, constraints, models? } })
 
 Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/build-from-blueprint.js",
-           args: { blueprintPath, repoPath, envPrefix } })   // envPrefix carries shell setup, e.g. PATH
+           args: { blueprintPath, repoPath, envPrefix, models? } })   // envPrefix carries shell setup, e.g. PATH
+
+`models` ({ grunt?, heavy? }) pins every spawned agent to a tier — grunt (mechanical: research readers, checkpoints, live-frontend verify, simplify review; default 'sonnet') or heavy (judgment: decompose, design, synthesis, foundation, build/verify, integrate, security/correctness review, triage; default inherit). Orchestrating from a pricier main-loop model? Pass `models: { heavy: 'opus' }`.
 ```
 
 If `${CLAUDE_SKILL_DIR}` isn't available, resolve this installed skill's absolute path (e.g. `~/.claude/skills/double-shot/workflows/…`), or copy the two `.js` files into `~/.claude/workflows/` and invoke by name: `Workflow({ name: "plan-to-blueprint", args: {…} })`. Each workflow runs in the background and returns one structured result; you'll be notified on completion.

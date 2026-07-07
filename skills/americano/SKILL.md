@@ -63,13 +63,14 @@ Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/americano-plan.js",
            args: { feature, repoPath, outDoc, invariants,
                    researchTargets: [{ label, prompt }, …],
                    designDimensions: [{ label, prompt, uses?: [researchIdx] }, …],
-                   styleRef? } })            // styleRef: an existing plan doc to match in voice/shape
+                   styleRef?,                // styleRef: an existing plan doc to match in voice/shape
+                   models? } })              // models: { grunt?, heavy? } — see below
 
 Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/americano-build.js",
-           args: { blueprintPath: outDoc, repoPath, gateCmd?, envPrefix?, constraints? } })
+           args: { blueprintPath: outDoc, repoPath, gateCmd?, envPrefix?, constraints?, models? } })
 ```
 
-`gateCmd` is the repo's own green gate (e.g. `./scripts/green.sh`, `make test`, `npm test`); the build auto-detects from the blueprint if omitted. Each workflow runs in the background and returns one structured result; you're notified on completion.
+`gateCmd` is the repo's own green gate (e.g. `./scripts/green.sh`, `make test`, `npm test`); the build auto-detects from the blueprint if omitted. `models` pins every spawned agent to one of two tiers so a fan-out never silently inherits an expensive main-loop model: `grunt` (mechanical stages — research readers, baseline gate, checkpoints, the simplify review; default `'sonnet'`) and `heavy` (judgment stages — design, critique, synthesis, plan, build, verify, integrate, security/correctness review, triage; default inherit). Orchestrating from a pricier main-loop model? Pass `models: { heavy: 'opus' }`. Each workflow runs in the background and returns one structured result; you're notified on completion.
 
 ## Operating principles
 
