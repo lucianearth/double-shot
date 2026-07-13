@@ -1,13 +1,14 @@
 export const meta = {
   name: 'americano-build',
-  description: 'Americano build: a TRIMMED build-from-blueprint for a BOUNDED change to an ALREADY-GREEN repo. Confirm green baseline (NO scaffold/foundation phase) -> build the blueprint waves (impl -> adversarial verify -> bounded fix loop) -> loop to green via the repo gate -> adversarial review + triage. For greenfield / new-foundation, use double-shot build-from-blueprint instead.',
+  description: 'Americano build: a TRIMMED build-from-blueprint for a BOUNDED change to an ALREADY-GREEN repo. Confirm green baseline (NO scaffold/foundation phase) -> build the blueprint waves (impl -> adversarial verify -> bounded fix loop) -> loop to green via the repo gate -> simplification wave (applied directly, gate-protected) -> adversarial review of the final shape with a bounded delta re-review loop. For greenfield / new-foundation, use double-shot build-from-blueprint instead.',
   whenToUse: 'After americano-plan, or any bounded blueprint with ordered waves over an EXISTING green codebase. Dilution vs build-from-blueprint: drops the greenfield Foundation/scaffold/freeze + dep-spike up-front pass.',
   phases: [
     { title: 'Plan', detail: 'transcribe the blueprint waves + the green-gate cmd + the invariant to protect (no foundation derivation)' },
     { title: 'Baseline', detail: 'confirm the repo is green at HEAD so any new red is ours; refuse to build on red' },
     { title: 'Modules', detail: 'ordered waves of disjoint work-items: impl -> adversarial verify -> bounded fix loop' },
     { title: 'Green', detail: 'integrate; loop the repo gate until fully green' },
-    { title: 'Review', detail: 'adversarial security/correctness/simplification + protect the named invariant -> triage + fix high-sev' },
+    { title: 'Simplify', detail: 'dedicated apex pass that APPLIES load-bearing simplifications (gate-protected, invariant-barred) so the final reviews see the final shape' },
+    { title: 'Review', detail: 'adversarial security + correctness on the post-simplify code -> triage + fix high-sev -> bounded delta re-review loop (all three lenses) until a clean round' },
     { title: 'Checkpoint', detail: 'commit + push WIP to the feature branch at every barrier so an OOM/crash never loses work (no PR, no merge)' },
   ],
 }
@@ -22,14 +23,19 @@ const gateHint = A.gateCmd || 'auto-detect the repo green gate from the blueprin
 const constraints = A.constraints || 'none beyond the blueprint'
 const CKPT = A.checkpoint !== false                  // WIP checkpointing default ON; pass checkpoint:false to disable
 const CKPT_REMOTE = A.checkpointRemote || 'origin'   // remote to push WIP checkpoints to
-// Model tiers — every agent() call is pinned to one of two tiers so a fan-out never silently inherits
-// an expensive main-loop model. `grunt` covers mechanical stages (baseline gate, checkpoints, the
-// simplify review); `heavy` covers judgment stages (plan, build, verify, fix, integrate, the
-// security/correctness reviews, triage). Defaults: grunt='sonnet'; heavy=undefined (inherit the session
-// model — set models:{heavy:'opus'} when orchestrating from a pricier main-loop model).
-const M = A.models || {}                 // { grunt?: string, heavy?: string }
+// Model tiers — every agent() call is pinned to one of three tiers so a fan-out never silently inherits
+// an expensive main-loop model. `grunt` covers mechanical stages (baseline gate, checkpoints); `heavy`
+// covers judgment stages (plan, build, verify, fix, integrate, triage); `apex` covers the simplification
+// wave (it APPLIES load-bearing simplifications, not just reports them — simplification is what keeps a
+// codebase from growing without bound; it takes the smartest model, not the cheapest) and the final
+// adversarial review lenses (security, correctness, and simplify on delta rounds). NO review ever runs
+// below heavy. Defaults: grunt='sonnet'; heavy=undefined (inherit the session model — set
+// models:{heavy:'opus'} when orchestrating from a pricier main-loop model); apex=falls back to heavy,
+// pure opt-in — set models:{apex:'fable'} to upgrade just the final reviews.
+const M = A.models || {}                 // { grunt?: string, heavy?: string, apex?: string }
 const GRUNT = ('grunt' in M) ? M.grunt : 'sonnet'
 const HEAVY = M.heavy
+const APEX = ('apex' in M) ? M.apex : HEAVY
 if (!blueprintPath) throw new Error('args.blueprintPath is required (absolute path to the blueprint)')
 
 const PLAN_SCHEMA = {
@@ -137,24 +143,41 @@ while (!green && round < 4) {
 }
 await checkpoint('green')
 
-phase('Review')
-const dims = [
-  { k: 'security', p: `ADVERSARIAL SECURITY REVIEW. Focus on the protected invariant (${plan.invariant_to_protect}) and every trust/authz boundary the change touches. Try to get past it; scrutinize error paths, logs, counts for leaks. Try to write a test that breaches it.` },
-  { k: 'correctness', p: `ADVERSARIAL CORRECTNESS REVIEW of the change's core logic/invariants. Try to construct inputs/sequences that violate an invariant. Are the new tests real or vacuous (do they reach the failure region)?` },
-  { k: 'simplify', p: `SIMPLIFICATION/QUALITY review (NOT a bug hunt): duplication, dead code, wrong-altitude abstraction, inconsistent error handling INTRODUCED by the change. High-value low-risk only; nothing touching the protected invariant or its tests.` },
-]
-const reviews = await parallel(dims.map((d) => () => agent(
-  `${d.p}\nReview ONLY the change introduced by ${blueprintPath} in ${repoPath} (the diff vs the green baseline). Run \`${ENV} ${G}\` if useful. Report findings with severity + location + suggested_fix.`,
-  { label: `review:${d.k}`, phase: 'Review', agentType: 'general-purpose', model: d.k === 'simplify' ? GRUNT : HEAVY, schema: FINDINGS })))
-const allF = reviews.filter(Boolean).flatMap((r) => (r.findings || []).map((f) => ({ ...f, dimension: r.dimension })))
-const mustFix = allF.filter((f) => f.severity === 'critical' || f.severity === 'high')
+phase('Simplify')
+const SIMPLIFY = { type: 'object', additionalProperties: false, properties: { applied: { type: 'array', items: { type: 'string' } }, skipped: { type: 'array', items: { type: 'string' } }, green: { type: 'boolean' }, summary: { type: 'string' } }, required: ['applied', 'skipped', 'green', 'summary'] }
+const simplified = await agent(
+  `SIMPLIFICATION WAVE — the pass that keeps this codebase from growing without bound; be hardcore AND surgical. Review ONLY the change introduced by ${blueprintPath} in ${repoPath} (the diff vs the green baseline) for duplication, dead code, needless indirection, wrong-altitude abstraction, and inconsistent error handling INTRODUCED by the change — then APPLY the load-bearing simplifications directly; do not just report them. Rules: never touch the protected invariant (${plan.invariant_to_protect}) or its tests; never change external behavior; skip anything you judge risky and record why. After applying, run \`${ENV} ${G}\` — it MUST be fully green (never delete/weaken a test to get there; revert your own edit instead).`,
+  { label: 'simplify-wave', phase: 'Simplify', agentType: 'general-purpose', model: APEX, schema: SIMPLIFY })
+await checkpoint('simplify')
 
-let triage = null
-if (mustFix.length) {
+phase('Review')
+// The final reviews see the FINAL (post-simplify) shape. Whenever triage lands fixes, every lens —
+// simplify included — re-reviews the DELTA those fixes introduced: a bounded fixpoint, not a full re-read.
+const secLens = { k: 'security', p: `ADVERSARIAL SECURITY REVIEW. Focus on the protected invariant (${plan.invariant_to_protect}) and every trust/authz boundary the change touches. Try to get past it; scrutinize error paths, logs, counts for leaks. Try to write a test that breaches it.` }
+const corLens = { k: 'correctness', p: `ADVERSARIAL CORRECTNESS REVIEW of the change's core logic/invariants. Try to construct inputs/sequences that violate an invariant. Are the new tests real or vacuous (do they reach the failure region)?` }
+const simLens = { k: 'simplify', p: `SIMPLIFICATION REVIEW (NOT a bug hunt): duplication, dead code, needless indirection, wrong-altitude abstraction, inconsistent error handling. Rate a finding high severity ONLY when the simplification is genuinely load-bearing for maintainability (it WILL be applied). Nothing touching the protected invariant or its tests.` }
+const allF = []
+let triage = null, lastRoundFixed = false, reviewRound = 0
+let lenses = [secLens, corLens]              // the simplify lens already ran as its own wave; it rejoins on delta rounds
+let scope = `ONLY the change introduced by ${blueprintPath} in ${repoPath} (the diff vs the green baseline; the simplification wave already ran — this is the final shape)`
+while (reviewRound < 3) {                    // 1 full round + up to 2 delta re-review rounds
+  reviewRound++
+  const reviews = await parallel(lenses.map((d) => () => agent(
+    `${d.p}\nReview ${scope}. Run \`${ENV} ${G}\` if useful. Report findings with severity + location + suggested_fix.`,
+    { label: `review:${d.k}#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: APEX, schema: FINDINGS })))
+  const roundF = reviews.filter(Boolean).flatMap((r) => (r.findings || []).map((f) => ({ ...f, dimension: r.dimension, round: reviewRound })))
+  allF.push(...roundF)
+  const mustFix = roundF.filter((f) => f.severity === 'critical' || f.severity === 'high')
+  if (!mustFix.length) { lastRoundFixed = false; break }   // fixpoint: a round with no new high-sev findings ends the review
   triage = await agent(
-    `Triage + fix the confirmed high-severity findings: CONFIRM each is real first (reproduce/inspect); fix real ones minimally per ${blueprintPath}; reject false positives with reasons. Then run \`${ENV} ${G}\` — must be GREEN; never delete a test to pass; never weaken the protected invariant. Do NOT apply medium/low/simplification findings unless trivially safe.\nFindings:\n${mustFix.map((f, i) => `${i + 1}. [${f.severity}/${f.dimension}] ${f.title} @ ${f.location}: ${f.detail} | fix: ${f.suggested_fix}`).join('\n')}`,
-    { label: 'triage+fix', phase: 'Review', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
+    `Triage + fix the confirmed high-severity findings: CONFIRM each is real first (reproduce/inspect); fix real ones minimally per ${blueprintPath}; reject false positives with reasons. High-severity SIMPLIFICATION findings are first-class — apply them (the gate protects you), never touching the protected invariant or its tests. Then run \`${ENV} ${G}\` — must be GREEN; never delete a test to pass; never weaken the protected invariant. Do NOT apply medium/low findings unless trivially safe.\nFindings:\n${mustFix.map((f, i) => `${i + 1}. [${f.severity}/${f.dimension}] ${f.title} @ ${f.location}: ${f.detail} | fix: ${f.suggested_fix}`).join('\n')}`,
+    { label: `triage+fix#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
+  lastRoundFixed = true
+  await checkpoint('review-fixes-' + reviewRound)  // safety, plus a clean git boundary so the next round can see exactly the delta
+  lenses = [secLens, corLens, simLens]       // the fixes changed the code — every lens re-checks, but only the delta
+  scope = `ONLY the DELTA from the round-${reviewRound} triage fixes in ${repoPath} (the latest checkpoint(review-fixes-${reviewRound}) commit — or \`git diff\` if checkpointing is off; the fixed findings were at: ${mustFix.map((f) => f.location).join('; ')}). The rest of the change was already reviewed — do not re-litigate it`
 }
+if (lastRoundFixed) log('Review: round cap reached with fixes still landing — the last triage fixes are gate-protected but not re-reviewed.')
 
 const finalCkpt = await checkpoint('final')        // capture Review fixes on the branch (still no PR / merge)
 
@@ -164,9 +187,11 @@ return {
   baseline_green: base.green,
   modules: built,
   integrate_green: green,
+  simplify_wave: simplified,
+  review_rounds: reviewRound,
   review_findings: allF,
-  must_fix: mustFix.length,
-  final_green: triage ? triage.green : green,
+  must_fix: allF.filter((f) => f.severity === 'critical' || f.severity === 'high').length,
+  final_green: triage ? triage.green : (simplified ? simplified.green : green),
   checkpointed: CKPT,
   final_checkpoint: finalCkpt,
 }

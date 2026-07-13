@@ -13,12 +13,16 @@ export const meta = {
 // args: { planPath (required), repoPath?, stack?, scope?, constraints? }
 // Some harnesses deliver `args` as a JSON string rather than a parsed object; normalize either way.
 const A = (typeof args === 'string') ? JSON.parse(args) : (args || {})
-// Model tiers — every agent() call is pinned to one of two args-overridable tiers so a fan-out never
-// silently inherits an expensive main-loop model. Defaults: grunt='sonnet'; heavy=undefined (inherit —
-// set models:{heavy:'opus'} when orchestrating from a pricier main-loop model).
-const M = A.models || {}                 // { grunt?: string, heavy?: string }
+// Model tiers — every agent() call is pinned to one of three args-overridable tiers so a fan-out never
+// silently inherits an expensive main-loop model. `grunt` = mechanical (research readers); `heavy` =
+// judgment (synthesis); `apex` = the highest-leverage judgment calls (decompose, subsystem design) —
+// the stages worth a frontier model. Defaults: grunt='sonnet'; heavy=undefined (inherit — set
+// models:{heavy:'opus'} when orchestrating from a pricier main-loop model); apex=falls back to heavy,
+// pure opt-in — set models:{apex:'fable'} to give decompose + design a frontier model.
+const M = A.models || {}                 // { grunt?: string, heavy?: string, apex?: string }
 const GRUNT = ('grunt' in M) ? M.grunt : 'sonnet'
 const HEAVY = M.heavy
+const APEX = ('apex' in M) ? M.apex : HEAVY
 const planPath = A.planPath
 const repoPath = A.repoPath || '.'
 const stack = A.stack || 'choose the best fit for this plan and justify the choice'
@@ -91,7 +95,7 @@ phase('Decompose')
 const decomp = await agent(
   `Read the plan at ${planPath} IN FULL. Stack guidance: ${stack}. Scope: ${scope}. Constraints: ${constraints}.\n\n` +
   `Identify two things: (1) the external dependencies / libraries / toolchain that need concrete research before building (with the specific questions to answer for each), and (2) the hard subsystems that need careful up-front design — the parts carrying the project's core invariants, its security-critical paths, or its subtle algorithms (with the design questions for each). Be thorough but don't pad: only list things that genuinely need research/design. Return structured.`,
-  { phase: 'Decompose', agentType: 'general-purpose', model: HEAVY, schema: DECOMP_SCHEMA })
+  { phase: 'Decompose', agentType: 'general-purpose', model: APEX, schema: DECOMP_SCHEMA })
 
 phase('Research')
 const research = await parallel((decomp.dependencies || []).map((d) => () =>
@@ -108,7 +112,7 @@ const designs = await parallel((decomp.subsystems || []).map((s) => () =>
   agent(
     `Design **${s.name}** for this project. Why it's hard: ${s.why_hard}\n\nAddress: ${s.design_questions}\n\n` +
     `Read ${planPath}. Stack: ${stack}. Keep the plan's stated principles intact. Provide concrete interface signatures (types/traits/DDL/schemas). If this subsystem is security-critical or carries a core invariant, be airtight about how the design enforces it.\n\nResearch context:\n${researchBrief}`,
-    { label: `design:${s.name}`, phase: 'Design', agentType: 'general-purpose', model: HEAVY, schema: DESIGN_SCHEMA })))
+    { label: `design:${s.name}`, phase: 'Design', agentType: 'general-purpose', model: APEX, schema: DESIGN_SCHEMA })))
 
 const designBrief = designs.filter(Boolean).map((d) =>
   `## ${d.component}\n${d.design}\n\nInterfaces:\n\`\`\`\n${d.interfaces.join('\n')}\n\`\`\`\nOpen questions:\n- ${d.open_questions.join('\n- ')}`).join('\n\n---\n\n')
