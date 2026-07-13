@@ -24,13 +24,17 @@ const researchTargets = a.researchTargets || []
 const designDimensions = a.designDimensions || []
 const invariants = a.invariants || '(none stated — infer the repo conventions; call out anything load-bearing you find.)'
 const styleRef = a.styleRef ? `Match the structure/voice of the existing plan doc at ${a.styleRef}.` : ''
-// Model tiers — every agent() call is pinned to one of two tiers so a fan-out never silently inherits
+// Model tiers — every agent() call is pinned to one of three tiers so a fan-out never silently inherits
 // an expensive main-loop model. `grunt` covers mechanical stages (research readers); `heavy` covers
-// judgment stages (design, critique, synthesis). Defaults: grunt='sonnet'; heavy=undefined (inherit the
-// session model — set models:{heavy:'opus'} when orchestrating from a pricier main-loop model).
-const M = a.models || {}                 // { grunt?: string, heavy?: string }
+// judgment stages (synthesis); `apex` covers the few highest-leverage judgment calls (design, the
+// adversarial critique) — the stages worth a frontier model. Defaults: grunt='sonnet'; heavy=undefined
+// (inherit the session model — set models:{heavy:'opus'} when orchestrating from a pricier main-loop
+// model); apex=falls back to heavy, so it's pure opt-in — set models:{apex:'fable'} to give design +
+// critique a frontier model without touching the rest.
+const M = a.models || {}                 // { grunt?: string, heavy?: string, apex?: string }
 const GRUNT = ('grunt' in M) ? M.grunt : 'sonnet'
 const HEAVY = M.heavy
+const APEX = ('apex' in M) ? M.apex : HEAVY
 
 if (!researchTargets.length || !designDimensions.length) {
   log('americano-plan: args.researchTargets[] and args.designDimensions[] are required. Aborting.')
@@ -51,7 +55,7 @@ const design = await parallel(designDimensions.map((d) => () => {
   const ctx = idx.map((j) => research[j]).filter(Boolean).join('\n\n---\n\n')
   return agent(
     `${d.prompt}\n\nProduce a CONCRETE design with exact code touch-points (file:line). Call out every risk to the stated invariants.\n\nINVARIANTS (do not violate):\n${invariants}\n\nRESEARCH CONTEXT:\n${ctx}`,
-    { label: `design:${d.label}`, phase: 'Design', effort: 'high', model: HEAVY })
+    { label: `design:${d.label}`, phase: 'Design', effort: 'high', model: APEX })
 }))
 log(`Design: ${design.filter(Boolean).length}/${designDimensions.length} done.`)
 
@@ -59,7 +63,7 @@ phase('Critique')
 const designsBlob = design.map((d, i) => `### ${(designDimensions[i] || {}).label}\n${d}`).filter(Boolean).join('\n\n')
 const critique = await agent(
   `You are an adversarial reviewer. Try to BREAK the following design for "${feature}" (repo: ${repoPath}). Be skeptical and concrete. For EACH issue give: severity (blocker/should-fix/note), where (file:line), and the fix. Specifically check it does NOT violate any stated invariant, and hunt for RUNTIME-BREAKERS (references to nonexistent tables/functions/columns), races, migration hazards, and untested edge cases.\n\nINVARIANTS:\n${invariants}\n\nDESIGNS:\n${designsBlob}\n\nReturn a PRIORITIZED list of must-fixes + notes.`,
-  { label: 'critique', phase: 'Critique', effort: 'high', model: HEAVY })
+  { label: 'critique', phase: 'Critique', effort: 'high', model: APEX })
 log('Critique done — writing the blueprint.')
 
 phase('Synthesize')

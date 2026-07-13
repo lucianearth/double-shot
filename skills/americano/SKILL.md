@@ -40,7 +40,7 @@ The axis is **how much rigor the change warrants**, NOT brownfield-vs-greenfield
         │
 [you: show the user the outline + the critique's must-fixes + flagged judgment calls]   ← FEEDBACK GATE (mandatory)
         │   ← the user may CLEAR CONTEXT here; the doc is the whole hand-off
-   PHASE 2 — americano-build  (green baseline → build waves → loop to green → review)   ← on a feature branch, checkpointed to origin throughout
+   PHASE 2 — americano-build  (green baseline → build waves → loop to green → simplify wave → review + delta re-review)   ← on a feature branch, checkpointed to origin throughout
         │
 [you: verify on disk yourself, then report]
 ```
@@ -51,7 +51,7 @@ The axis is **how much rigor the change warrants**, NOT brownfield-vs-greenfield
 2. **Scope Phase 1 inline.** From the conversation + a quick repo skim, derive the **researchTargets** (subsystems a build must get right — confirm-not-explore), the **designDimensions** (one per orthogonal piece), the **invariants** the design must not violate, and the **outDoc** (`docs/<feature>-plan-v1.md`). This inline scouting is what keeps Phase 1 light — don't make the workflow rediscover the design.
 3. **Phase 1 — americano-plan.** Invoke the bundled workflow (see *Invoking*) with those args. It writes the build-ready blueprint and returns the outline + must-fix list + flagged judgment calls.
 4. **Gate (mandatory).** Show the user the outline + the critique's **must-fixes** + any judgment calls. Separate the mechanical must-fixes (already folded into the doc) from genuine human decisions. Fold their answers into the doc. The user may clear context after this — the doc stands alone. **If the target repo defines a `review-subagents` skill, run it over the plan doc first** (a design-pattern congruence check, not a general review) and fold its blockers before the gate.
-5. **Branch + upstream, then Phase 2 — americano-build.** Ensure you're on a feature branch (NOT the default) with an `origin` upstream (`git push -u origin HEAD`) so the build can checkpoint to the remote. Invoke the build workflow on the doc. It confirms the repo is green at HEAD, builds the waves (each adversarially verified + bounded-fix-looped), loops to green via the repo's own gate, then runs the adversarial review + triage — **committing + pushing a WIP checkpoint to the branch at every barrier** (each wave, green, final) so a crash/OOM mid-run never loses work. (On by default; `checkpoint: false` disables, `checkpointRemote` overrides `origin`.)
+5. **Branch + upstream, then Phase 2 — americano-build.** Ensure you're on a feature branch (NOT the default) with an `origin` upstream (`git push -u origin HEAD`) so the build can checkpoint to the remote. Invoke the build workflow on the doc. It confirms the repo is green at HEAD, builds the waves (each adversarially verified + bounded-fix-looped), loops to green via the repo's own gate, then runs a dedicated **Simplify wave** (an apex agent APPLIES load-bearing simplifications directly — gate-protected, invariant-barred) followed by the adversarial security + correctness review of the final shape + triage, with a **bounded delta re-review loop** (whenever triage lands fixes, all three lenses re-review just the fixes' diff, until a clean round; max 2 extra rounds) — **committing + pushing a WIP checkpoint to the branch at every barrier** (each wave, green, simplify, each review-fix round, final) so a crash/OOM mid-run never loses work. (On by default; `checkpoint: false` disables, `checkpointRemote` overrides `origin`.)
 6. **Verify on disk yourself.** Don't trust the self-report — re-run the gate, confirm green, report with the diff + honest caveats. The branch is already checkpointed to `origin`; commit + push anything *you* fixed during verification. **If the target repo defines a `review-subagents` skill, run it over the final diff** before reporting — fold blockers first. Then offer to **open a PR** (still the user's call).
 
 ## Invoking the workflows
@@ -64,13 +64,13 @@ Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/americano-plan.js",
                    researchTargets: [{ label, prompt }, …],
                    designDimensions: [{ label, prompt, uses?: [researchIdx] }, …],
                    styleRef?,                // styleRef: an existing plan doc to match in voice/shape
-                   models? } })              // models: { grunt?, heavy? } — see below
+                   models? } })              // models: { grunt?, heavy?, apex? } — see below
 
 Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/americano-build.js",
            args: { blueprintPath: outDoc, repoPath, gateCmd?, envPrefix?, constraints?, models? } })
 ```
 
-`gateCmd` is the repo's own green gate (e.g. `./scripts/green.sh`, `make test`, `npm test`); the build auto-detects from the blueprint if omitted. `models` pins every spawned agent to one of two tiers so a fan-out never silently inherits an expensive main-loop model: `grunt` (mechanical stages — research readers, baseline gate, checkpoints, the simplify review; default `'sonnet'`) and `heavy` (judgment stages — design, critique, synthesis, plan, build, verify, integrate, security/correctness review, triage; default inherit). Orchestrating from a pricier main-loop model? Pass `models: { heavy: 'opus' }`. Each workflow runs in the background and returns one structured result; you're notified on completion.
+`gateCmd` is the repo's own green gate (e.g. `./scripts/green.sh`, `make test`, `npm test`); the build auto-detects from the blueprint if omitted. `models` pins every spawned agent to one of three tiers so a fan-out never silently inherits an expensive main-loop model: `grunt` (mechanical stages — research readers, baseline gate, checkpoints; default `'sonnet'`), `heavy` (judgment stages — synthesis, plan, build, verify, integrate, triage; default inherit), and `apex` (the highest-stakes calls — design, the adversarial critique, the simplification wave — which applies load-bearing simplifications directly, since simplification is what keeps a codebase from growing without bound — and the final review lenses; defaults to heavy so it's pure opt-in). No review ever runs below heavy. Orchestrating from a pricier main-loop model? Pass `models: { heavy: 'opus' }`. Want a frontier model on just planning + reviews? Pass `models: { apex: 'fable' }`. Each workflow runs in the background and returns one structured result; you're notified on completion.
 
 ## Operating principles
 

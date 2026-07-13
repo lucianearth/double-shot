@@ -1,6 +1,6 @@
 export const meta = {
   name: 'build-from-blueprint',
-  description: 'Autonomously build a project from a BLUEPRINT.md to green: derive the module DAG, scaffold + verify the foundation (crown-jewel adversarially checked), build modules in dependency waves (each adversarially verified + fix-looped), loop tests to green, then adversarial review + triage-fix. Generalized from real, proven build runs.',
+  description: 'Autonomously build a project from a BLUEPRINT.md to green: derive the module DAG, scaffold + verify the foundation (crown-jewel adversarially checked), build modules in dependency waves (each adversarially verified + fix-looped), loop tests to green, then a simplification wave (applied directly, gate-protected) + adversarial review of the final shape with a bounded delta re-review loop. Generalized from real, proven build runs.',
   whenToUse: 'After plan-to-blueprint (or any concrete buildable blueprint with an ordered module/build plan). Pairs with the One-Shot Playbook: the main loop gates the blueprint with the user; THIS workflow is the gate-free build engine.',
   phases: [
     { title: 'Plan', detail: 'read blueprint -> module DAG/waves, build+test cmds, crown-jewel, risky deps; spike risky deps' },
@@ -8,7 +8,8 @@ export const meta = {
     { title: 'Modules', detail: 'waves of disjoint modules: impl -> adversarial verify -> bounded fix loop' },
     { title: 'Green', detail: 'integrate; loop build+test until fully green' },
     { title: 'Live', detail: 'IF the project has a UI: serve it live + agent-browser SCREENSHOT every surface; a vision agent confirms it actually RENDERS (green != renders); fix-loop visual defects; re-green' },
-    { title: 'Review', detail: 'adversarial security/correctness/simplification -> triage + fix high-sev -> re-verify green' },
+    { title: 'Simplify', detail: 'dedicated apex pass that APPLIES load-bearing simplifications across the built project (build+test-protected, crown-jewel-barred) so the final reviews see the final shape' },
+    { title: 'Review', detail: 'adversarial security + correctness on the post-simplify code -> triage + fix high-sev -> bounded delta re-review loop (all three lenses) until a clean round' },
     { title: 'Checkpoint', detail: 'commit + push WIP to the feature branch at every barrier so an OOM/crash never loses work (no PR, no merge)' },
   ],
 }
@@ -24,12 +25,21 @@ const testCmdHint = A.testCmd || 'auto-detect from the blueprint/repo'
 const constraints = A.constraints || 'none beyond the blueprint'
 const CKPT = A.checkpoint !== false                 // WIP checkpointing default ON; pass checkpoint:false to disable
 const CKPT_REMOTE = A.checkpointRemote || 'origin'  // remote to push WIP checkpoints to
-// Model tiers — every agent() call is pinned to one of two args-overridable tiers so a fan-out never
-// silently inherits an expensive main-loop model. Defaults: grunt='sonnet'; heavy=undefined (inherit —
-// set models:{heavy:'opus'} when orchestrating from a pricier main-loop model).
-const M = A.models || {}                 // { grunt?: string, heavy?: string }
+// Model tiers — every agent() call is pinned to one of three args-overridable tiers so a fan-out never
+// silently inherits an expensive main-loop model. `grunt` = mechanical (checkpoints); `heavy` = judgment
+// (plan, build, verify, fix, integrate, triage, and the live-FE judge+fixer — which delegates its
+// token-heavy browser mechanics to a sonnet subagent it spawns, keeping judgment to itself); `apex` =
+// the one-shot, highest-stakes calls (crown-jewel foundation verify, the simplification wave — which
+// APPLIES load-bearing simplifications, not just reports them; simplification is what keeps a codebase
+// from growing without bound and takes the smartest model, not the cheapest — and the final adversarial
+// review lenses: security, correctness, and simplify on delta rounds). NO review ever runs below heavy. Defaults:
+// grunt='sonnet'; heavy=undefined (inherit — set models:{heavy:'opus'} when orchestrating from a pricier
+// main-loop model); apex=falls back to heavy, pure opt-in — set models:{apex:'fable'} to upgrade just
+// those review calls.
+const M = A.models || {}                 // { grunt?: string, heavy?: string, apex?: string }
 const GRUNT = ('grunt' in M) ? M.grunt : 'sonnet'
 const HEAVY = M.heavy
+const APEX = ('apex' in M) ? M.apex : HEAVY
 if (!blueprintPath) throw new Error('args.blueprintPath is required (absolute path to the blueprint)')
 
 const PLAN_SCHEMA = {
@@ -119,7 +129,7 @@ let foundation = await agent(
   { label: 'foundation', phase: 'Foundation', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
 let fverdict = await agent(
   `Adversarially verify the foundation — especially the CROWN JEWEL: ${plan.crown_jewel}. Try to BREAK the stated invariant: write throwaway code that SHOULD be impossible — in a typed/compiled language, code that MUST FAIL TO COMPILE (confirm it does); otherwise, an input or sequence that MUST BE REJECTED at runtime (confirm it is, via a test). Run \`${ENV} ${T}\` for the foundation. Return pass=false with specifics if the invariant can be violated or the foundation is incomplete.`,
-  { label: 'verify:foundation', phase: 'Foundation', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })
+  { label: 'verify:foundation', phase: 'Foundation', agentType: 'general-purpose', model: APEX, schema: VERDICT })
 if (!fverdict.pass) {
   foundation = await agent(`Fix the foundation; close every issue: ${JSON.stringify(fverdict.blocking_issues)}. Per ${blueprintPath}. Re-run \`${ENV} ${B} && ${T}\`. Report.`, { label: 'fix:foundation', phase: 'Foundation', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
 }
@@ -165,30 +175,47 @@ let live = null
 if (plan.fe_verify && plan.fe_verify.routes && plan.fe_verify.routes.length) {
   const fe = plan.fe_verify
   live = await agent(
-    `LIVE FRONT-END VERIFICATION. The unit gate (\`${ENV} ${T}\`) is GREEN — but GREEN != RENDERS CORRECTLY. A type-checked, a11y-perfect, fully-tested page can still be VISUALLY BROKEN at runtime: invisible content (a stuck animation / opacity:0, a duplicate-dependency context split), an unstyled / overlapping / off-screen surface, an error boundary, or an empty state where content should be. NONE of that is catchable by a compiler, a type-check, an a11y tree, or a unit test — the ONLY way is to RUN the app and LOOK at the pixels. Do exactly that; never infer "it renders" from the code.\n1. Bring up the live stack: \`${ENV} ${fe.serve_cmd}\` in the BACKGROUND${fe.backend ? ('; also bring up the backend / seed the data it needs: ' + fe.backend) : ''}; wait until it is up (${fe.ready_check}).\n2. Ensure agent-browser is available (it drives real Chrome + returns SCREENSHOTS; install it per the repo's front-end guide if missing). If it genuinely cannot be installed, set ran_live=false and say so — do NOT fake this step.\n3. For EACH route in ${JSON.stringify(fe.routes)} (and each flow in ${JSON.stringify(fe.flows || [])}): set a MOBILE viewport FIRST, agent-browser open \`${fe.base_url}<path>\`, take a SCREENSHOT to a file, and READ that screenshot image yourself — you are vision-capable. Judge it against ${blueprintPath} + the route's "expect": is the primary content actually VISIBLE and styled? anything invisible / transparent / zero-height / overlapping / unstyled / off-screen / errored / wrongly-empty? Then repeat at a desktop viewport.\n4. For EVERY visual defect: find the ROOT CAUSE (a runtime / CSS / bundling / dependency-context bug, NOT a test) and FIX it in the app code; rebuild + RE-SCREENSHOT to confirm it now renders. Loop until every listed surface renders correctly.\n5. Re-run \`${ENV} ${T}\` — it MUST stay GREEN after your fixes (never weaken a test to pass).\nRepo: ${repoPath}. Report per-surface renders_correctly + the screenshot_path you actually inspected + defects; the fixes applied; and stayed_green. NEVER mark a surface verified without a screenshot you personally looked at.`,
-    { label: 'live-fe-verify', phase: 'Live', agentType: 'general-purpose', model: GRUNT, schema: FE_VERDICT })
+    `LIVE FRONT-END VERIFICATION. The unit gate (\`${ENV} ${T}\`) is GREEN — but GREEN != RENDERS CORRECTLY. A type-checked, a11y-perfect, fully-tested page can still be VISUALLY BROKEN at runtime: invisible content (a stuck animation / opacity:0, a duplicate-dependency context split), an unstyled / overlapping / off-screen surface, an error boundary, or an empty state where content should be. NONE of that is catchable by a compiler, a type-check, an a11y tree, or a unit test — the ONLY way is to RUN the app and LOOK at the pixels. Do exactly that; never infer "it renders" from the code.\nTOKEN BALANCE: browser-driving is mechanical and token-heavy — delegate the MECHANICS of steps 1-3 (stack bring-up, agent-browser install, opening routes, capturing screenshots to files at both viewports) to a cheaper subagent via YOUR OWN Agent tool with model 'sonnet', having it return the screenshot file paths. Judgment is NOT delegable: YOU read every screenshot yourself, YOU decide whether it renders, YOU root-cause and fix. Never accept the subagent's opinion of whether a page renders.\n1. Bring up the live stack: \`${ENV} ${fe.serve_cmd}\` in the BACKGROUND${fe.backend ? ('; also bring up the backend / seed the data it needs: ' + fe.backend) : ''}; wait until it is up (${fe.ready_check}).\n2. Ensure agent-browser is available (it drives real Chrome + returns SCREENSHOTS; install it per the repo's front-end guide if missing). If it genuinely cannot be installed, set ran_live=false and say so — do NOT fake this step.\n3. For EACH route in ${JSON.stringify(fe.routes)} (and each flow in ${JSON.stringify(fe.flows || [])}): set a MOBILE viewport FIRST, agent-browser open \`${fe.base_url}<path>\`, take a SCREENSHOT to a file, and READ that screenshot image yourself — you are vision-capable. Judge it against ${blueprintPath} + the route's "expect": is the primary content actually VISIBLE and styled? anything invisible / transparent / zero-height / overlapping / unstyled / off-screen / errored / wrongly-empty? Then repeat at a desktop viewport.\n4. For EVERY visual defect: find the ROOT CAUSE (a runtime / CSS / bundling / dependency-context bug, NOT a test) and FIX it in the app code; rebuild + RE-SCREENSHOT to confirm it now renders. Loop until every listed surface renders correctly.\n5. Re-run \`${ENV} ${T}\` — it MUST stay GREEN after your fixes (never weaken a test to pass).\nRepo: ${repoPath}. Report per-surface renders_correctly + the screenshot_path you actually inspected + defects; the fixes applied; and stayed_green. NEVER mark a surface verified without a screenshot you personally looked at.`,
+    { label: 'live-fe-verify', phase: 'Live', agentType: 'general-purpose', model: HEAVY, schema: FE_VERDICT })
 } else {
   log('Live: no fe_verify recipe in the plan (no UI surfaces to verify) — skipping the live screenshot review.')
 }
 
-phase('Review')
-const dims = [
-  { k: 'security', p: `ADVERSARIAL SECURITY REVIEW. Focus on the crown jewel (${plan.crown_jewel}) and every trust/authz boundary. Try to get past it; scrutinize error paths, logs, and counts for leaks. Try to write a test that breaches it.` },
-  { k: 'correctness', p: `ADVERSARIAL CORRECTNESS REVIEW of the core algorithms/invariants. Try to construct inputs/sequences that violate an invariant. Are the existing tests real or vacuous (do they actually reach the failure region)?` },
-  { k: 'simplify', p: `SIMPLIFICATION/QUALITY review (NOT a bug hunt): duplication, dead code, wrong-altitude abstraction, inconsistent error handling. High-value low-risk only; nothing that touches the crown-jewel or its tests.` },
-]
-const reviews = await parallel(dims.map((d) => () => agent(
-  `${d.p}\nRead the code under ${repoPath} and ${blueprintPath}. Run \`${ENV} ${T}\` if useful. Report findings with severity + location + suggested_fix.`,
-  { label: `review:${d.k}`, phase: 'Review', agentType: 'general-purpose', model: d.k === 'simplify' ? GRUNT : HEAVY, schema: FINDINGS })))
-const allF = reviews.filter(Boolean).flatMap((r) => (r.findings || []).map((f) => ({ ...f, dimension: r.dimension })))
-const mustFix = allF.filter((f) => f.severity === 'critical' || f.severity === 'high')
+phase('Simplify')
+const SIMPLIFY = { type: 'object', additionalProperties: false, properties: { applied: { type: 'array', items: { type: 'string' } }, skipped: { type: 'array', items: { type: 'string' } }, green: { type: 'boolean' }, summary: { type: 'string' } }, required: ['applied', 'skipped', 'green', 'summary'] }
+const simplified = await agent(
+  `SIMPLIFICATION WAVE — the pass that keeps this codebase from growing without bound; be hardcore AND surgical. Review the project just built under ${repoPath} (vs ${blueprintPath}) for duplication, dead code, needless indirection, wrong-altitude abstraction, and inconsistent error handling — then APPLY the load-bearing simplifications directly; do not just report them. Rules: never touch the crown jewel (${plan.crown_jewel}) or its tests; never change external behavior; skip anything you judge risky and record why. After applying, run \`${ENV} ${B}\` then \`${ENV} ${T}\` — both MUST be fully green (never delete/weaken a test to get there; revert your own edit instead).`,
+  { label: 'simplify-wave', phase: 'Simplify', agentType: 'general-purpose', model: APEX, schema: SIMPLIFY })
+await checkpoint('simplify')
 
-let triage = null
-if (mustFix.length) {
+phase('Review')
+// The final reviews see the FINAL (post-Live, post-simplify) shape. Whenever triage lands fixes, every
+// lens — simplify included — re-reviews the DELTA those fixes introduced: a bounded fixpoint, not a full re-read.
+const secLens = { k: 'security', p: `ADVERSARIAL SECURITY REVIEW. Focus on the crown jewel (${plan.crown_jewel}) and every trust/authz boundary. Try to get past it; scrutinize error paths, logs, and counts for leaks. Try to write a test that breaches it.` }
+const corLens = { k: 'correctness', p: `ADVERSARIAL CORRECTNESS REVIEW of the core algorithms/invariants. Try to construct inputs/sequences that violate an invariant. Are the existing tests real or vacuous (do they actually reach the failure region)?` }
+const simLens = { k: 'simplify', p: `SIMPLIFICATION REVIEW (NOT a bug hunt): duplication, dead code, needless indirection, wrong-altitude abstraction, inconsistent error handling. Rate a finding high severity ONLY when the simplification is genuinely load-bearing for maintainability (it WILL be applied). Nothing that touches the crown-jewel or its tests.` }
+const allF = []
+let triage = null, lastRoundFixed = false, reviewRound = 0
+let lenses = [secLens, corLens]              // the simplify lens already ran as its own wave; it rejoins on delta rounds
+let scope = `the code under ${repoPath} vs ${blueprintPath} (the simplification wave already ran — this is the final shape)`
+while (reviewRound < 3) {                    // 1 full round + up to 2 delta re-review rounds
+  reviewRound++
+  const reviews = await parallel(lenses.map((d) => () => agent(
+    `${d.p}\nReview ${scope}. Run \`${ENV} ${T}\` if useful. Report findings with severity + location + suggested_fix.`,
+    { label: `review:${d.k}#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: APEX, schema: FINDINGS })))
+  const roundF = reviews.filter(Boolean).flatMap((r) => (r.findings || []).map((f) => ({ ...f, dimension: r.dimension, round: reviewRound })))
+  allF.push(...roundF)
+  const mustFix = roundF.filter((f) => f.severity === 'critical' || f.severity === 'high')
+  if (!mustFix.length) { lastRoundFixed = false; break }   // fixpoint: a round with no new high-sev findings ends the review
   triage = await agent(
-    `Triage + fix the confirmed high-severity findings: CONFIRM each is real first (reproduce/inspect); fix real ones minimally per ${blueprintPath}; reject false positives with reasons. Then run \`${ENV} ${T}\` — must be GREEN; never delete a test to pass. Do NOT apply medium/low/simplification findings unless trivially safe.\nFindings:\n${mustFix.map((f, i) => `${i + 1}. [${f.severity}/${f.dimension}] ${f.title} @ ${f.location}: ${f.detail} | fix: ${f.suggested_fix}`).join('\n')}`,
-    { label: 'triage+fix', phase: 'Review', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
+    `Triage + fix the confirmed high-severity findings: CONFIRM each is real first (reproduce/inspect); fix real ones minimally per ${blueprintPath}; reject false positives with reasons. High-severity SIMPLIFICATION findings are first-class — apply them (the test gate protects you), never touching the crown-jewel or its tests. Then run \`${ENV} ${T}\` — must be GREEN; never delete a test to pass. Do NOT apply medium/low findings unless trivially safe.\nFindings:\n${mustFix.map((f, i) => `${i + 1}. [${f.severity}/${f.dimension}] ${f.title} @ ${f.location}: ${f.detail} | fix: ${f.suggested_fix}`).join('\n')}`,
+    { label: `triage+fix#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
+  lastRoundFixed = true
+  await checkpoint('review-fixes-' + reviewRound)  // safety, plus a clean git boundary so the next round can see exactly the delta
+  lenses = [secLens, corLens, simLens]       // the fixes changed the code — every lens re-checks, but only the delta
+  scope = `ONLY the DELTA from the round-${reviewRound} triage fixes in ${repoPath} (the latest checkpoint(review-fixes-${reviewRound}) commit — or \`git diff\` if checkpointing is off; the fixed findings were at: ${mustFix.map((f) => f.location).join('; ')}). The rest of the project was already reviewed — do not re-litigate it`
 }
+if (lastRoundFixed) log('Review: round cap reached with fixes still landing — the last triage fixes are gate-protected but not re-reviewed.')
 
 const finalCkpt = await checkpoint('final')        // capture Live + Review fixes on the branch (still no PR / merge)
 
@@ -199,9 +226,11 @@ return {
   modules: built,
   integrate_green: green,
   live,
+  simplify_wave: simplified,
+  review_rounds: reviewRound,
   review_findings: allF,
-  must_fix: mustFix.length,
-  final_green: triage ? triage.green : green,
+  must_fix: allF.filter((f) => f.severity === 'critical' || f.severity === 'high').length,
+  final_green: triage ? triage.green : (simplified ? simplified.green : green),
   checkpointed: CKPT,
   final_checkpoint: finalCkpt,
 }
