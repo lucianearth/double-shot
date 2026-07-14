@@ -6,8 +6,11 @@ description: >
   story↔frame traceability), and iterate with the human until the wireframe is APPROVED —
   before any blueprint or build. The approved stories+frames become the UX contract that
   planning and building must serve. Use when starting any UI-bearing project or change
-  ("wireframe this", "UX first", "what should this screen be?"), and before double-shot /
-  americano planning whenever the work touches a user-facing surface. Not for pure
+  ("wireframe this", "UX first", "what should this screen be?"), before double-shot /
+  americano planning whenever the work touches a user-facing surface, AND standalone —
+  "just the wireframe part", "do the wireframe thing (from double-shot)", "let's wireframe
+  it first" — where the session simply ends with the approved contract on disk
+  (stories.md + frames + decisions.md) for a later build to pick up. Not for pure
   backend/CLI work with no surface.
 ---
 
