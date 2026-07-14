@@ -7,10 +7,11 @@ export const meta = {
     { title: 'Research', detail: 'one agent per external dependency/toolchain' },
     { title: 'Design', detail: 'one agent per hard subsystem' },
     { title: 'Synthesize', detail: 'merge into BLUEPRINT.md' },
+    { title: 'Reconcile', detail: 'IF a wireframe contract exists: confirm the blueprint keeps every frame feasible, accurate, and representative — report drift for the gate' },
   ],
 }
 
-// args: { planPath (required), repoPath?, stack?, scope?, constraints? }
+// args: { planPath (required), repoPath?, stack?, scope?, constraints?, wireframesDir? }
 // Some harnesses deliver `args` as a JSON string rather than a parsed object; normalize either way.
 const A = (typeof args === 'string') ? JSON.parse(args) : (args || {})
 // Model tiers — every agent() call is pinned to one of three args-overridable tiers so a fan-out never
@@ -28,6 +29,12 @@ const repoPath = A.repoPath || '.'
 const stack = A.stack || 'choose the best fit for this plan and justify the choice'
 const scope = A.scope || 'the full core software described by the plan, with external services abstracted behind interfaces plus deterministic fakes for tests'
 const constraints = A.constraints || 'none specified beyond the plan'
+// Approved wireframe set (stories.md + frames + decisions.md) = the UX contract. When present, every
+// judgment stage is bound to it: designs must support the frames; deviations are flagged, never silent.
+const wireframesDir = A.wireframesDir || ''
+const WIRE = wireframesDir
+  ? `\n\nUX CONTRACT: an APPROVED wireframe set lives at ${wireframesDir} (stories.md + frame HTML files + decisions.md — all small; read them, nothing else there needs exploring). It is the human-approved experience contract: your output MUST support the frames and the user stories, and must not re-litigate anything recorded in decisions.md. If something you're doing genuinely conflicts with a frame, flag it as an open question — never silently deviate.`
+  : ''
 
 if (!planPath) throw new Error('args.planPath is required (absolute path to the plan/design doc)')
 
@@ -94,7 +101,7 @@ const BLUEPRINT_SCHEMA = {
 phase('Decompose')
 const decomp = await agent(
   `Read the plan at ${planPath} IN FULL. Stack guidance: ${stack}. Scope: ${scope}. Constraints: ${constraints}.\n\n` +
-  `Identify two things: (1) the external dependencies / libraries / toolchain that need concrete research before building (with the specific questions to answer for each), and (2) the hard subsystems that need careful up-front design — the parts carrying the project's core invariants, its security-critical paths, or its subtle algorithms (with the design questions for each). Be thorough but don't pad: only list things that genuinely need research/design. Return structured.`,
+  `Identify two things: (1) the external dependencies / libraries / toolchain that need concrete research before building (with the specific questions to answer for each), and (2) the hard subsystems that need careful up-front design — the parts carrying the project's core invariants, its security-critical paths, or its subtle algorithms (with the design questions for each). Be thorough but don't pad: only list things that genuinely need research/design. Return structured.${WIRE}`,
   { phase: 'Decompose', agentType: 'general-purpose', model: APEX, schema: DECOMP_SCHEMA })
 
 phase('Research')
@@ -111,7 +118,7 @@ phase('Design')
 const designs = await parallel((decomp.subsystems || []).map((s) => () =>
   agent(
     `Design **${s.name}** for this project. Why it's hard: ${s.why_hard}\n\nAddress: ${s.design_questions}\n\n` +
-    `Read ${planPath}. Stack: ${stack}. Keep the plan's stated principles intact. Provide concrete interface signatures (types/traits/DDL/schemas). If this subsystem is security-critical or carries a core invariant, be airtight about how the design enforces it.\n\nResearch context:\n${researchBrief}`,
+    `Read ${planPath}. Stack: ${stack}. Keep the plan's stated principles intact. Provide concrete interface signatures (types/traits/DDL/schemas). If this subsystem is security-critical or carries a core invariant, be airtight about how the design enforces it.${WIRE}\n\nResearch context:\n${researchBrief}`,
     { label: `design:${s.name}`, phase: 'Design', agentType: 'general-purpose', model: APEX, schema: DESIGN_SCHEMA })))
 
 const designBrief = designs.filter(Boolean).map((d) =>
@@ -122,8 +129,19 @@ const blueprint = await agent(
   `You are the lead architect. Synthesize the research and designs below into a single coherent, buildable implementation blueprint. Write it to ${repoPath}/BLUEPRINT.md.\n\n` +
   `Sections: overview & stack decision (with concrete library versions from research); workspace/module layout + dependency DAG + build order; each designed subsystem; the data layer; external-service abstractions + deterministic fakes for tests; the test plan (including security tests for any security-critical path and correctness tests for every core invariant); and an ORDERED list of build phases, each with explicit acceptance criteria the autonomous build will execute against.\n\n` +
   `Resolve conflicts between design docs; where they disagree, choose the better option and say why. Keep the plan's principles intact. Be concrete and buildable. After writing the file, return the structured summary.\n\n` +
-  `Constraints to honor: ${constraints}\n\n=== RESEARCH ===\n${researchBrief}\n\n=== DESIGNS ===\n${designBrief}`,
+  `Constraints to honor: ${constraints}${WIRE}${wireframesDir ? `\nIn the blueprint, TRACE every user-facing surface to its frame file in ${wireframesDir}, and write UI acceptance criteria as STRUCTURAL matches to the frame (same hierarchy, same primary action) — never pixel matches.` : ''}\n\n=== RESEARCH ===\n${researchBrief}\n\n=== DESIGNS ===\n${designBrief}`,
   { label: 'synthesize:blueprint', phase: 'Synthesize', agentType: 'general-purpose', model: HEAVY, schema: BLUEPRINT_SCHEMA })
 
+// After the blueprint exists, confirm the UX contract survived it: technical decisions made during
+// research/design can silently invalidate an approved frame. Drift goes to the human gate, not the build.
+let reconcile = null
+if (wireframesDir) {
+  phase('Reconcile')
+  const RECONCILE = { type: 'object', additionalProperties: false, properties: { feasible: { type: 'boolean' }, drift: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { frame: { type: 'string' }, issue: { type: 'string' }, proposal: { type: 'string' }, resolution: { type: 'string', description: "'fix-blueprint' or 'revise-frame' (frame revisions need human re-approval)" } }, required: ['frame', 'issue', 'proposal', 'resolution'] } }, stories_at_risk: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } }, required: ['feasible', 'drift', 'stories_at_risk', 'notes'] }
+  reconcile = await agent(
+    `RECONCILE the blueprint against the UX contract. Read ONLY ${blueprint.blueprint_path} and the wireframe set at ${wireframesDir} (stories.md, the frame HTML files, decisions.md) — do not explore anything else. Confirm three things: (1) FEASIBLE — nothing in the blueprint's stack/architecture makes any frame technically infeasible; (2) ACCURATE — no blueprint decision silently changed what a screen must be (data a frame shows that the design doesn't produce, an action that moved, a flow that gained a step); (3) REPRESENTATIVE — every story in stories.md is still served end-to-end by the blueprint's build plan. For each drift: name the frame, the issue, a concrete proposal, and whether the fix belongs in the blueprint ('fix-blueprint') or the wireframe ('revise-frame' — that one needs human re-approval). Return structured.`,
+    { label: 'reconcile:wireframes', phase: 'Reconcile', agentType: 'general-purpose', model: APEX, schema: RECONCILE })
+}
+
 // @ts-expect-error top-level return — the Workflow runtime wraps this script body in an async function
-return blueprint
+return wireframesDir ? { ...blueprint, wireframe_reconcile: reconcile } : blueprint

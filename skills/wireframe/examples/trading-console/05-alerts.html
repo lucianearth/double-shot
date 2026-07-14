@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="../../assets/wireframe.css"></head>
+<body>
+<section class="frame" data-title="Alerts" data-stories="S6,S8,S10">
+  <div class="bar"><strong>Alerts</strong><span class="grow"></span><span class="chip hollow">mute 1h</span></div>
+  <div class="pad">
+    <div class="banner">⚠ <div class="stack grow"><strong>Feed disconnected 09:44</strong><span class="line w60"></span></div></div>
+    <div class="h2">Critical</div>
+    <div class="list">
+      <div class="item"><span class="chip">crit</span><div class="stack grow"><strong>Drawdown limit hit</strong><span class="line w60"></span></div><span class="small muted">09:44</span></div>
+    </div>
+    <div class="h2">Warning</div>
+    <div class="list">
+      <div class="item"><span class="chip hollow">warn</span><div class="stack grow"><span class="line w80"></span><span class="line w40"></span></div><span class="small muted">08:51</span></div>
+      <div class="item"><span class="chip hollow">warn</span><div class="stack grow"><span class="line w60"></span><span class="line w25"></span></div><span class="small muted">07:19</span></div>
+    </div>
+    <div class="h2">Info</div>
+    <div class="list">
+      <div class="item"><span class="chip hollow">info</span><div class="stack grow"><span class="line w80"></span></div><span class="small muted">06:58</span></div>
+    </div>
+  </div>
+  <nav class="nav">
+    <span class="tab">⌂<i>home</i></span>
+    <span class="tab">▤<i>positions</i></span>
+    <span class="tab active">⚠<i>alerts</i></span>
+    <span class="tab">⚙<i>settings</i></span>
+  </nav>
+</section>
+<aside class="note">Severity groups, newest first within each (S6) — the 3am tap target is always the top row. The stale-feed banner (S8) pins ABOVE critical: a dead feed outranks any alert, because every number below it is suspect. Only the one alert that names its cause gets real words; the rest are skeletons.</aside>
+</body></html>
