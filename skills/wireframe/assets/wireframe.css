@@ -1,0 +1,131 @@
+/* wireframe.css — the low-fi wireframe kit.
+ * Deliberately ugly-on-purpose: grayscale, one font, sketchy borders. Structure and
+ * hierarchy are the ONLY subject; if a wireframe argument is about color or polish,
+ * the kit has failed. Never add colors or branding here (the yellow .note sticky is
+ * annotation, not UI). Compose ONLY these classes — if a screen needs a component
+ * this file doesn't have, that's a design smell to question before a kit addition. */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #e9e9e9;
+  font-family: ui-rounded, "Segoe UI", system-ui, sans-serif;
+  color: #222;
+  padding: 40px 24px 24px;
+  display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start;
+}
+
+/* --- The frame: one phone screen. data-title + data-stories are REQUIRED (lint checks). --- */
+.frame {
+  width: 375px; min-height: 640px;
+  background: #fff;
+  border: 2px solid #444; border-radius: 14px;
+  display: flex; flex-direction: column;
+  position: relative;
+}
+.frame.desktop { width: 960px; min-height: 560px; }
+.frame.short { min-height: 320px; }             /* partial frames: a state variant, a sheet, a fragment */
+.frame::before {                                 /* title tab, rendered from the attribute */
+  content: attr(data-title);
+  position: absolute; top: -26px; left: 2px;
+  font-weight: 700; font-size: 14px;
+}
+.frame::after {                                  /* story traceability chip */
+  content: "→ " attr(data-stories);
+  position: absolute; top: -24px; right: 2px;
+  font-family: ui-monospace, monospace; font-size: 11px; color: #888;
+}
+
+/* --- Layout primitives --- */
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.row   { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+.grow  { flex: 1; }
+.spacer { flex: 1; min-height: 8px; }
+.pad   { padding: 14px; }
+.frame > .pad { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.divider { border-top: 1.5px solid #ddd; }
+
+/* --- Chrome --- */
+.bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 2px solid #444;
+}
+.nav {
+  margin-top: auto;
+  display: flex; border-top: 2px solid #444;
+}
+.nav .tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 0 10px; font-size: 16px; color: #666;
+}
+.nav .tab i { font-style: normal; font-size: 10px; letter-spacing: .02em; }
+.nav .tab.active { color: #111; font-weight: 700; box-shadow: inset 0 3px 0 #333; }
+
+/* --- Content atoms --- */
+.h1 { font-size: 22px; font-weight: 700; }
+.h2 { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #555; }
+.small { font-size: 12px; }
+.muted { color: #888; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #333; flex: none; }
+.dot.hollow { background: #fff; border: 2px solid #333; }   /* down / disconnected */
+
+/* Skeleton text: body copy you should NOT write words for. Real words are only for
+ * labels, headings, and actions — everything else is a .line (keeps the word budget honest). */
+.line { display: block; height: 10px; border-radius: 5px; background: #d9d9d9; }
+.line.w25 { width: 25%; } .line.w40 { width: 40%; } .line.w60 { width: 60%; }
+.line.w80 { width: 80%; } .line.w90 { width: 90%; }
+
+/* Image / chart placeholder: crosshatched box, never real artwork */
+.img-x {
+  background:
+    linear-gradient(to top right,   transparent calc(50% - 1px), #bbb calc(50% - 1px), #bbb calc(50% + 1px), transparent calc(50% + 1px)),
+    linear-gradient(to bottom right, transparent calc(50% - 1px), #bbb calc(50% - 1px), #bbb calc(50% + 1px), transparent calc(50% + 1px)),
+    #f3f3f3;
+  border: 1.5px solid #999; border-radius: 8px;
+  min-height: 96px;
+}
+.img-x.thumb { min-height: 44px; width: 44px; flex: none; }
+
+/* --- Controls --- */
+.btn {
+  border: 2px solid #333; border-radius: 10px;
+  padding: 10px 16px; text-align: center; font-weight: 600;
+  background: #fff;
+}
+.btn.primary { background: #333; color: #fff; }   /* max 1–2 per frame; the lint counts them */
+.btn.block { display: block; }
+.input, .search {
+  display: flex; align-items: center; gap: 8px;
+  border: 2px solid #777; border-radius: 10px;
+  padding: 10px 12px; background: #fff;
+}
+.ph { color: #999; }                               /* placeholder text inside inputs */
+.chip {
+  display: inline-block; border: 1.5px solid #555; border-radius: 999px;
+  padding: 2px 10px; font-size: 12px; font-weight: 600; background: #eee;
+}
+.chip.hollow { background: #fff; color: #777; border-color: #aaa; }
+.badge { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 700; }
+
+/* --- Composites --- */
+.list { display: flex; flex-direction: column; }
+.list .item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 2px; border-bottom: 1.5px solid #e2e2e2;
+}
+.kpi { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.kpi .val { font-size: 20px; font-weight: 700; }
+.kpi .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #888; }
+.banner {
+  border: 2px dashed #888; border-radius: 10px;
+  padding: 10px 12px; font-size: 13px; background: #f6f6f6;
+  display: flex; gap: 8px; align-items: center;
+}
+
+/* --- Annotations (meta, not UI — excluded from the word budget) --- */
+.note {
+  width: 210px; padding: 10px 12px;
+  background: #f8f0b8; border: 1px solid #d8ce8a;
+  box-shadow: 2px 3px 0 rgba(0,0,0,.12);
+  transform: rotate(-1.2deg);
+  font-size: 12px; line-height: 1.45;
+}
