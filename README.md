@@ -53,6 +53,23 @@ for **americano** when the design's already settled and the change is bounded.
 The axis is *how much rigor the change warrants* — double-shot is great in mature
 repos too.
 
+## Wireframe — align on the UX before anything gets built
+
+The plugin also ships **`wireframe`** (`/wireframe`) — a UX-first gate that both
+double-shot and americano run automatically whenever the work touches a
+user-facing surface, and that you can run standalone:
+
+> *Let's just do the wireframe part for `plan_xyz.md`*
+
+It writes **UX-forward user stories** (beats of the experience, not test cases),
+wireframes them with a constrained **low-fi HTML kit** (grayscale by
+construction — you argue about structure, never colors), lints taste
+mechanically (word budgets, one primary action, and story↔frame traceability —
+a story no frame serves *fails*, which catches the missing search bar before
+anything is built), and iterates a one-page showcase with you until **you**
+approve. The approved set (`stories.md` + frames + `decisions.md`) lives on
+disk as the UX contract: the blueprint is reconciled against it, and the build's
+live visual check judges every surface against its frame.
 
 ## License
 
