@@ -28,6 +28,30 @@ Two design decisions make AI wireframing work, don't fight them:
 2. **Written ≠ good.** You must LOOK at what you made (screenshot + vision) and lint it
    before the human ever sees it.
 
+## Run it context-lean (orchestrator + subagents)
+
+You (the main agent) hold ONLY the loop; subagents do all the file work. **The loop's
+entire state lives on disk** — `stories.md`, the frames, and `decisions.md` — never in
+anyone's context, which is what makes fresh subagents cheap and the loop survivable
+across compaction and sessions.
+
+- **Round 0**: one subagent gets a distilled brief (or the plan-doc path) → writes
+  stories + frames, lints, builds the showcase. You receive a one-paragraph summary.
+- **Each revision round**: hand a FRESH subagent the wireframes dir + the user's
+  feedback verbatim → it applies the feedback, re-lints, regenerates the showcase,
+  appends to `decisions.md`, and returns ≤5 lines. You republish the showcase and relay.
+- **`decisions.md`** is the re-litigation guard: each round the subagent appends what
+  feedback came in, what changed, and what was explicitly rejected — so round 5's fresh
+  agent doesn't propose back what round 2 killed.
+
+**Every subagent prompt must pin the context budget.** Include, verbatim in spirit:
+*"Your entire world is the wireframes directory (stories.md, the frame files,
+decisions.md, wireframe.css) plus this brief/feedback. Do NOT explore the repo, do NOT
+read the codebase, do NOT try to learn everything, do NOT read the full plan doc unless
+this brief points you at specific sections. Stay focused and context-efficient: read the
+dir, do the work, lint, regenerate the showcase, append to decisions.md, and return a
+summary of five lines or fewer — never file contents."*
+
 ## The protocol
 
 ### 1. Stories first — the thorough sweep
@@ -100,17 +124,23 @@ node <skill-dir>/assets/showcase.mjs docs/wireframes
 ```
 
 One self-contained `showcase.html` (stories on top, frames + stickies below) — show it to
-the human (send the file / publish it). Iterate on their feedback in words; frames are
-tiny, so rounds are cheap. **Only the human approves a wireframe.** If the repo defines a
-`design-subagents` skill, run it over the showcase BEFORE the human sees it and fold its
-blockers — it carries the project's taste (text minimization, motion, brand UX rules).
+the human (send the file / publish it as an artifact, same URL each round). Iterate on
+their feedback in words; frames are tiny, so rounds are cheap, and every round is logged
+in `decisions.md`. **Only the human approves a wireframe.** If the repo defines a
+`review-subagents` skill, run it over the showcase BEFORE the human sees it and fold its
+blockers — a repo's design/UX reviewer (taste: text minimization, motion, brand UX rules)
+lives inside review-subagents and picks this up.
 
 ### 6. Hand off as contract
 
-After approval: commit `stories.md` + frames; downstream planning must trace every
-UI surface to a frame, and `fe_verify` route expectations derive from frames (structural
-match — "is the hierarchy this?" — not pixel match). A build that contradicts an approved
-frame without a new human decision is a defect.
+After approval: commit `stories.md` + frames + `decisions.md`; downstream planning must
+trace every UI surface to a frame, and `fe_verify` route expectations derive from frames
+(structural match — "is the hierarchy this?" — not pixel match). Pass the dir as
+`wireframesDir` to the double-shot/americano plan workflows; their Reconcile phase then
+confirms the finished blueprint kept every frame **feasible, accurate, and
+representative**, and any drift comes back to the human gate ('revise-frame' drift means
+another wireframe round + re-approval before building). A build that contradicts an
+approved frame without a new human decision is a defect.
 
 ## Example
 
