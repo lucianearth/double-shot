@@ -4,7 +4,8 @@
   "private": true,
   "description": "Dev tooling for the double-shot plugin. The plugin itself ships no runtime deps; this only powers type-checking the workflow scripts.",
   "scripts": {
-    "typecheck": "tsc -p skills/double-shot/workflows/jsconfig.json && tsc -p skills/americano/workflows/jsconfig.json"
+    "typecheck": "tsc -p skills/double-shot/workflows/jsconfig.json && tsc -p skills/americano/workflows/jsconfig.json",
+    "lint:wireframes": "node skills/wireframe/assets/lint-wireframes.mjs skills/wireframe/examples/trading-console"
   },
   "devDependencies": {
     "typescript": "^6.0.3"
