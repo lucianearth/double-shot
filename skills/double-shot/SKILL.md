@@ -6,8 +6,10 @@ description: >-
   "double-shot it", "build the whole thing from this plan", "ship this design / blueprint".
   Runs a two-phase orchestration — plan→blueprint (with a mandatory human feedback gate),
   then blueprint→build-to-green + adversarial review — using the bundled `plan-to-blueprint`
-  and `build-from-blueprint` workflows. The main agent orchestrates; the workflows do the
-  building. NOT for quick features or bug fixes. For an already-aligned, BOUNDED change landing
+  and `build-from-blueprint` workflows. UI-bearing work first passes a WIREFRAME GATE
+  (UX-forward user stories + low-fi frames, iterated with the user to approval via the
+  bundled `wireframe` skill; the approved set becomes the UX contract downstream). The main
+  agent orchestrates; the workflows do the building. NOT for quick features or bug fixes. For an already-aligned, BOUNDED change landing
   in a GREEN repo — where the full up-front pass would be overkill — use the lighter `americano` skill.
 ---
 

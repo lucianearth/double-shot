@@ -71,6 +71,34 @@ approve. The approved set (`stories.md` + frames + `decisions.md`) lives on
 disk as the UX contract: the blueprint is reconciled against it, and the build's
 live visual check judges every surface against its frame.
 
+Its **user-story method** is also the house style for stories in general: stories
+are *beats of the experience* — what the user sees, reaches, and feels — never
+correctness cases (the build pipeline owns correctness). Even in a pure
+pre-planning conversation, "let's write the user stories" should think this way.
+
+## Model tiers — put your best model where it counts
+
+Every agent the workflows spawn is pinned to one of three args-overridable
+tiers, so a fan-out never silently inherits an expensive main-loop model:
+
+- **`grunt`** — mechanical stages (research readers, baseline gate, checkpoints).
+  Default `'sonnet'`.
+- **`heavy`** — judgment stages (build, verify, fix, integrate, triage).
+  Default: inherit the session model.
+- **`apex`** — the few highest-stakes calls: decompose, design, the adversarial
+  critique, the simplification wave, the final review lenses, the wireframe
+  reconcile. Defaults to heavy, so it's pure opt-in.
+
+**If you have a frontier model available, pass it as apex** — today that means
+Fable; adapt to whatever the smartest model is when you read this:
+
+```
+models: { apex: 'fable' }              // frontier judgment on planning + reviews only
+models: { heavy: 'opus', apex: 'fable' }   // and/or keep the fan-out off a pricey main-loop model
+```
+
+No review ever runs below heavy.
+
 ## License
 
 GNU Affero General Public License v3.0. See [LICENSE](LICENSE).

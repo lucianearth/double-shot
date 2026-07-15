@@ -5,7 +5,9 @@ description: >-
   reviewed result without the full ceremony. Two phases with a clean-context handoff: a BOUNDED
   plan→blueprint (targeted research, one design pass per dimension, one adversarial critique),
   then a TRIMMED build (no greenfield scaffold/foundation phase — confirm the repo is green,
-  build the blueprint's waves, loop to green, adversarial review). Use when you and the user
+  build the blueprint's waves, loop to green, adversarial review). A change that touches a
+  user-facing surface first passes the WIREFRAME GATE (bundled `wireframe` skill, scoped to
+  the touched surfaces). Use when you and the user
   already hashed out the design and the change doesn't warrant double-shot's heavy up-front pass
   — phrasings like "americano this", "lite double-shot", "wrap this up and build it". Use full
   `double-shot` instead when the change is greenfield, introduces a new foundation, or is

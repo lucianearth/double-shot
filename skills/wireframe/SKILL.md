@@ -10,8 +10,12 @@ description: >
   americano planning whenever the work touches a user-facing surface, AND standalone —
   "just the wireframe part", "do the wireframe thing (from double-shot)", "let's wireframe
   it first" — where the session simply ends with the approved contract on disk
-  (stories.md + frames + decisions.md) for a later build to pick up. Not for pure
-  backend/CLI work with no surface.
+  (stories.md + frames + decisions.md) for a later build to pick up. ALSO load this
+  whenever USER STORIES come up at all — writing them, reviewing them, or pre-planning a
+  feature in conversation before any workflow exists: the UX-forward story method here
+  (beats of the experience, never correctness cases; the category sweep; story↔frame
+  traceability) is the house style for user stories. Not for pure backend/CLI work with
+  no surface.
 ---
 
 # wireframe — align on the experience before anything supports it
