@@ -38,6 +38,23 @@ const WIRE = wireframesDir
 
 if (!planPath) throw new Error('args.planPath is required (absolute path to the plan/design doc)')
 
+// Retry an agent() that returns null — a terminal error after the harness's own retries (e.g. a
+// transient "Overloaded" on the fable tier). If the original call was pinned to fable, the retry
+// falls back to opus, so a capacity blip can't leave decompose/design/reconcile with a dropped
+// (null'd, .filter(Boolean)-eaten) agent. Non-null results pass straight through.
+async function agentRetry(prompt, opts, tries = 2) {
+  let r = await agent(prompt, opts)
+  for (let i = 1; r == null && i <= tries; i++) {
+    const m = opts && opts.model
+    const isFable = typeof m === 'string' && m.toLowerCase().includes('fable')
+    const model = isFable ? 'opus' : m
+    const label = (opts && opts.label) ? `${opts.label}:retry${i}${isFable ? '-opus' : ''}` : undefined
+    log(`agent "${(opts && opts.label) || 'unlabeled'}" returned null — retry ${i}/${tries}${isFable ? ' on opus (fable fallback)' : ''}`)
+    r = await agent(prompt, { ...opts, model, label })
+  }
+  return r
+}
+
 const DECOMP_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -99,7 +116,7 @@ const BLUEPRINT_SCHEMA = {
 }
 
 phase('Decompose')
-const decomp = await agent(
+const decomp = await agentRetry(
   `Read the plan at ${planPath} IN FULL. Stack guidance: ${stack}. Scope: ${scope}. Constraints: ${constraints}.\n\n` +
   `Identify two things: (1) the external dependencies / libraries / toolchain that need concrete research before building (with the specific questions to answer for each), and (2) the hard subsystems that need careful up-front design — the parts carrying the project's core invariants, its security-critical paths, or its subtle algorithms (with the design questions for each). Be thorough but don't pad: only list things that genuinely need research/design. Return structured.${WIRE}`,
   { phase: 'Decompose', agentType: 'general-purpose', model: APEX, schema: DECOMP_SCHEMA })
@@ -116,7 +133,7 @@ const researchBrief = research.filter(Boolean).map((r) =>
 
 phase('Design')
 const designs = await parallel((decomp.subsystems || []).map((s) => () =>
-  agent(
+  agentRetry(
     `Design **${s.name}** for this project. Why it's hard: ${s.why_hard}\n\nAddress: ${s.design_questions}\n\n` +
     `Read ${planPath}. Stack: ${stack}. Keep the plan's stated principles intact. Provide concrete interface signatures (types/traits/DDL/schemas). If this subsystem is security-critical or carries a core invariant, be airtight about how the design enforces it.${WIRE}\n\nResearch context:\n${researchBrief}`,
     { label: `design:${s.name}`, phase: 'Design', agentType: 'general-purpose', model: APEX, schema: DESIGN_SCHEMA })))
@@ -138,7 +155,7 @@ let reconcile = null
 if (wireframesDir) {
   phase('Reconcile')
   const RECONCILE = { type: 'object', additionalProperties: false, properties: { feasible: { type: 'boolean' }, drift: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { frame: { type: 'string' }, issue: { type: 'string' }, proposal: { type: 'string' }, resolution: { type: 'string', description: "'fix-blueprint' or 'revise-frame' (frame revisions need human re-approval)" } }, required: ['frame', 'issue', 'proposal', 'resolution'] } }, stories_at_risk: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } }, required: ['feasible', 'drift', 'stories_at_risk', 'notes'] }
-  reconcile = await agent(
+  reconcile = await agentRetry(
     `RECONCILE the blueprint against the UX contract. Read ONLY ${blueprint.blueprint_path} and the wireframe set at ${wireframesDir} (stories.md, the frame HTML files, decisions.md) — do not explore anything else. Confirm three things: (1) FEASIBLE — nothing in the blueprint's stack/architecture makes any frame technically infeasible; (2) ACCURATE — no blueprint decision silently changed what a screen must be (data a frame shows that the design doesn't produce, an action that moved, a flow that gained a step); (3) REPRESENTATIVE — every story in stories.md is still served end-to-end by the blueprint's build plan. For each drift: name the frame, the issue, a concrete proposal, and whether the fix belongs in the blueprint ('fix-blueprint') or the wireframe ('revise-frame' — that one needs human re-approval). Return structured.`,
     { label: 'reconcile:wireframes', phase: 'Reconcile', agentType: 'general-purpose', model: APEX, schema: RECONCILE })
 }

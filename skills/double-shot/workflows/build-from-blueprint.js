@@ -43,6 +43,25 @@ const HEAVY = M.heavy
 const APEX = ('apex' in M) ? M.apex : HEAVY
 if (!blueprintPath) throw new Error('args.blueprintPath is required (absolute path to the blueprint)')
 
+// Retry an agent() that returns null — a terminal error after the harness's own retries (e.g. a
+// transient "Overloaded" on the fable tier). Each retry re-spawns the SAME work; if the original call
+// was pinned to fable, the retry falls back to opus, so a capacity blip on one tier can't leave a
+// phase with a silent coverage gap (the workflow otherwise .filter(Boolean)-drops a null'd agent).
+// Non-null results pass straight through — zero overhead on the happy path. Use for judgment calls
+// (verify / review / simplify) where a dropped agent = lost coverage, not for cheap parallel grunt work.
+async function agentRetry(prompt, opts, tries = 2) {
+  let r = await agent(prompt, opts)
+  for (let i = 1; r == null && i <= tries; i++) {
+    const m = opts && opts.model
+    const isFable = typeof m === 'string' && m.toLowerCase().includes('fable')
+    const model = isFable ? 'opus' : m
+    const label = (opts && opts.label) ? `${opts.label}:retry${i}${isFable ? '-opus' : ''}` : undefined
+    log(`agent "${(opts && opts.label) || 'unlabeled'}" returned null — retry ${i}/${tries}${isFable ? ' on opus (fable fallback)' : ''}`)
+    r = await agent(prompt, { ...opts, model, label })
+  }
+  return r
+}
+
 const PLAN_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -128,7 +147,7 @@ phase('Foundation')
 let foundation = await agent(
   `Scaffold the project and build the FOUNDATION per ${blueprintPath}: ${plan.foundation}. Create the workspace/skeleton + ALL module stubs + the shared contracts so the dependency graph compiles and later modules only fill in their OWN files (never the shared manifest/contracts). Then fully implement the foundation/shared-contract module. Run \`${ENV} ${B}\` (must compile) + the foundation's tests; fix until green. Repo: ${repoPath}.`,
   { label: 'foundation', phase: 'Foundation', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
-let fverdict = await agent(
+let fverdict = await agentRetry(
   `Adversarially verify the foundation — especially the CROWN JEWEL: ${plan.crown_jewel}. Try to BREAK the stated invariant: write throwaway code that SHOULD be impossible — in a typed/compiled language, code that MUST FAIL TO COMPILE (confirm it does); otherwise, an input or sequence that MUST BE REJECTED at runtime (confirm it is, via a test). Run \`${ENV} ${T}\` for the foundation. Return pass=false with specifics if the invariant can be violated or the foundation is incomplete.`,
   { label: 'verify:foundation', phase: 'Foundation', agentType: 'general-purpose', model: APEX, schema: VERDICT })
 if (!fverdict.pass) {
@@ -184,7 +203,7 @@ if (plan.fe_verify && plan.fe_verify.routes && plan.fe_verify.routes.length) {
 
 phase('Simplify')
 const SIMPLIFY = { type: 'object', additionalProperties: false, properties: { applied: { type: 'array', items: { type: 'string' } }, skipped: { type: 'array', items: { type: 'string' } }, green: { type: 'boolean' }, summary: { type: 'string' } }, required: ['applied', 'skipped', 'green', 'summary'] }
-const simplified = await agent(
+const simplified = await agentRetry(
   `SIMPLIFICATION WAVE — the pass that keeps this codebase from growing without bound; be hardcore AND surgical. Review the project just built under ${repoPath} (vs ${blueprintPath}) for duplication, dead code, needless indirection, wrong-altitude abstraction, and inconsistent error handling — then APPLY the load-bearing simplifications directly; do not just report them. Rules: never touch the crown jewel (${plan.crown_jewel}) or its tests; never change external behavior; skip anything you judge risky and record why. After applying, run \`${ENV} ${B}\` then \`${ENV} ${T}\` — both MUST be fully green (never delete/weaken a test to get there; revert your own edit instead).`,
   { label: 'simplify-wave', phase: 'Simplify', agentType: 'general-purpose', model: APEX, schema: SIMPLIFY })
 await checkpoint('simplify')
@@ -201,7 +220,7 @@ let lenses = [secLens, corLens]              // the simplify lens already ran as
 let scope = `the code under ${repoPath} vs ${blueprintPath} (the simplification wave already ran — this is the final shape)`
 while (reviewRound < 3) {                    // 1 full round + up to 2 delta re-review rounds
   reviewRound++
-  const reviews = await parallel(lenses.map((d) => () => agent(
+  const reviews = await parallel(lenses.map((d) => () => agentRetry(
     `${d.p}\nReview ${scope}. Run \`${ENV} ${T}\` if useful. Report findings with severity + location + suggested_fix.`,
     { label: `review:${d.k}#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: APEX, schema: FINDINGS })))
   const roundF = reviews.filter(Boolean).flatMap((r) => (r.findings || []).map((f) => ({ ...f, dimension: r.dimension, round: reviewRound })))
