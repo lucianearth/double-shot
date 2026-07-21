@@ -64,7 +64,8 @@ summary of five lines or fewer — never file contents."*
 ### 1. Stories first — the thorough sweep
 
 Write `stories.md` in the wireframes dir (`docs/wireframes/` unless told otherwise):
-`- **S1** — As a …, I want …, so that …` under category headings.
+`- **S1** — As a …, I want …, so that …` under category headings (the lint accepts `—`,
+`–`, or a plain `-` after the ID — use `-` when the doc should read author-neutral).
 
 **Stories are UX-FORWARD: each one is a beat of the experience — what the user sees,
 reaches, and feels while doing the thing the app is for.** They are NOT correctness
@@ -102,7 +103,13 @@ One `NN-name.html` per screen (numeric prefix = presentation order). Copy
 - **Real words only for labels, headings, and actions.** Body copy is `.line` skeletons —
   if you're writing sentences into a frame, you're arguing with prose instead of structure.
 - Mobile frame first; add `.desktop` only where the layout materially differs.
-- Distinct states (empty, error, first-run) are their own `.short` frames.
+- Distinct states (empty, error, first-run) are their own frames — FULL screens, exactly
+  like the state they portray. There is no half-height fragment class: a shrunken frame
+  reads as a popup and confuses humans and agents alike. If something truly is a
+  sheet/dialog, draw it over its dimmed parent screen inside one full frame.
+- Optionally group the set into journeys: put `data-section="Donor journey — the first
+  give"` on the first frame of each group; the showcase renders a section header there
+  and every frame's `data-title` as a visible caption.
 - Explain behavior in `<aside class="note">` stickies (annotation, budget-exempt), placed
   after the frame: what taps do, why something is placed where it is, which story it serves.
 
@@ -119,10 +126,12 @@ unknown story refs, missing `data-title`. Warns on frames serving no story. Fix 
 ### 4. Look at it
 
 Serve the dir (`python3 -m http.server`), screenshot every frame with agent-browser, and
-READ each screenshot yourself. Self-critique against: is the hierarchy the story's
-hierarchy? one obvious primary action? would a thumb reach it? what feels missing walking
-each story tap-by-tap? If agent-browser is unavailable, say so — do not claim the visual
-check happened.
+READ each screenshot yourself. No agent-browser? A headless Chrome works:
+`npx -y @puppeteer/browsers install chrome-headless-shell@stable --path .chrome`, then
+`<binary> --no-sandbox --screenshot=wf.png --window-size=1350,8000 file://<abs>/showcase.html`.
+Self-critique against: is the hierarchy the story's hierarchy? one obvious primary
+action? would a thumb reach it? what feels missing walking each story tap-by-tap? If no
+browser is available at all, say so — do not claim the visual check happened.
 
 ### 5. Present & iterate — the human gate
 
@@ -130,8 +139,11 @@ check happened.
 node <skill-dir>/assets/showcase.mjs docs/wireframes
 ```
 
-One self-contained `showcase.html` (stories on top, frames + stickies below) — show it to
-the human (send the file / publish it as an artifact, same URL each round). Iterate on
+One self-contained `showcase.html` (stories on top, frames + stickies below, section
+headers wherever frames declare `data-section`) — show it to the human (send the file /
+publish it as an artifact, same URL each round). The headless binary from step 4 also
+prints a shareable PDF (`--print-to-pdf=wf.pdf file://<abs>/showcase.html`) — useful when
+review happens in Google Drive, whose PDF preview supports region-anchored comments. Iterate on
 their feedback in words; frames are tiny, so rounds are cheap, and every round is logged
 in `decisions.md`. **Only the human approves a wireframe.** If the repo defines a
 `review-subagents` skill, run it over the showcase BEFORE the human sees it and fold its
