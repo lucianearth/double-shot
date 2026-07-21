@@ -15,7 +15,7 @@
       "source": "./",
       "displayName": "Double Shot",
       "description": "Take a plan/design doc to a built, tested, reviewed product in two phases (plan→blueprint, then blueprint→green) with a human feedback gate between. A skill orchestrates two bundled workflows.",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "author": {
         "name": "Lucian Hymer",
         "email": "lucian.hymer@gmail.com"

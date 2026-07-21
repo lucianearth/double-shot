@@ -23,7 +23,6 @@ body {
   position: relative;
 }
 .frame.desktop { width: 960px; min-height: 560px; }
-.frame.short { min-height: 320px; }             /* partial frames: a state variant, a sheet, a fragment */
 .frame::before {                                 /* title tab, rendered from the attribute */
   content: attr(data-title);
   position: absolute; top: -26px; left: 2px;
