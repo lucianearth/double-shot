@@ -50,3 +50,21 @@ checked. CI/pre-commit can run the same command.
   final) so a crash or OOM mid-build never loses work. On by default; `checkpoint:false`
   disables, `checkpointRemote` overrides `origin`. Checkpoints never open a PR or merge —
   that stays the user's call.
+
+## Versioning — bump it in the same PR as the change
+
+The plugin version lives in **two** files that must move together:
+
+- `.claude-plugin/plugin.json` → `version`
+- `.claude-plugin/marketplace.json` → the `double-shot` **plugin entry's** `version`
+  (not the top-level `metadata.version`, which is the marketplace's own and stays put)
+
+Bump in the **same PR as the change**, not a follow-up — that's how every release here
+has shipped. Minor for a behaviour or schema change to a skill or workflow, patch for a
+doc/comment fix.
+
+Why it matters: Claude Code caches plugins **by version**, at
+`~/.claude/plugins/cache/double-shot/double-shot/<version>/`. Ship a change without a
+bump and anyone who already has that version keeps running the old copy — silently, with
+no error and nothing to notice. (This is real: `0.5.1` and `0.6.0` sat side by side in
+that cache with byte-identical `americano-build.js`.)
