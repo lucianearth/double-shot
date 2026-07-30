@@ -72,7 +72,7 @@ const PLAN_SCHEMA = {
     crown_jewel: { type: 'string', description: 'The security-critical / core-invariant component to verify hardest, AND the exact invariant to assert.' },
     risky_deps: { type: 'array', items: { type: 'string' }, description: 'External deps/toolchain needing an up-front spike/bake-off before building (or empty).' },
     waves: {
-      type: 'array', description: 'Ordered build waves (barrier between waves). DEFAULT TO SERIAL: prefer fewer, coarser steps — typically ONE module per wave — because most projects are a near-linear dependency chain. Put MULTIPLE modules in one wave (they run in parallel) ONLY when they are genuinely independent (disjoint files, no compile-time dependency on each other) AND each is substantial enough that a dedicated, focused agent context is worth more than the coordination + shared build-lock overhead. Group small or tightly-coupled files into a single module that one agent builds in sequence. Fan-out buys CONTEXT ISOLATION, not wall-clock (a single-crate build shares one target-dir lock, so concurrent builds mostly serialize anyway).',
+      type: 'array', description: 'Ordered build waves (barrier between waves). DEFAULT TO SERIAL: prefer fewer, coarser steps — typically ONE module per wave — because most projects are a near-linear dependency chain. Put MULTIPLE modules in one wave (they run in parallel) ONLY when they are genuinely independent (disjoint files, no compile-time dependency on each other) AND each is substantial enough that a dedicated, focused agent context is worth more than the coordination + shared build-lock overhead. Fan-out buys CONTEXT ISOLATION, not wall-clock (a single-crate build shares one target-dir lock, so concurrent builds mostly serialize anyway). AIM FOR 6-10 MODULES TOTAL, HARD MAX 12: a module is the CORRECTNESS unit — one thing you would want independently proven correct, describable to a reviewer in one sentence — and if the blueprint names its own phases/stages, use THOSE as the modules. Every module pays a fixed orientation + adversarial-verify + fix-loop tax that does NOT shrink when the module does, so 30 small modules cost several times what 10 coherent ones cost for the same code. Do NOT split a module to make files disjoint (that is what its `steps` are for) and do NOT map one blueprint work-item to one module (items are `steps[].parts`; a module holding a dozen is normal). A module being large is fine — its parts absorb the volume.',
       items: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -81,8 +81,35 @@ const PLAN_SCHEMA = {
             type: 'array',
             items: {
               type: 'object', additionalProperties: false,
-              properties: { name: { type: 'string' }, path_globs: { type: 'string' }, blueprint_secs: { type: 'string' }, acceptance: { type: 'string' } },
-              required: ['name', 'path_globs', 'blueprint_secs', 'acceptance'],
+              properties: {
+                name: { type: 'string' },
+                path_globs: { type: 'string' },
+                blueprint_secs: { type: 'string' },
+                acceptance: { type: 'string', description: 'Machine-checkable acceptance for the MODULE AS A WHOLE — this is what the adversarial verifier checks.' },
+                steps: {
+                  type: 'array',
+                  description: 'The module\'s work split into ORDERED steps. Parts within one step run in PARALLEL and so MUST own disjoint files; steps run in sequence, so a later step may build on an earlier one. Split generously — each part gets its own FRESH agent context, and that is the main lever on build cost (one agent implementing ten items carries all ten items\' context for the whole module; ten agents do not). When two items collide on a file, put them in consecutive steps rather than merging them into one part. A step holding a single part is fine.',
+                  items: {
+                    type: 'object', additionalProperties: false,
+                    properties: {
+                      parts: {
+                        type: 'array',
+                        items: {
+                          type: 'object', additionalProperties: false,
+                          properties: {
+                            id: { type: 'string', description: 'The blueprint work-item id, or a short slug if the blueprint does not number them.' },
+                            spec: { type: 'string', description: 'What this one part must implement, and its own acceptance criterion.' },
+                            paths: { type: 'string', description: 'The files this part owns. Must be disjoint from every other part in the SAME step.' },
+                          },
+                          required: ['id', 'spec', 'paths'],
+                        },
+                      },
+                    },
+                    required: ['parts'],
+                  },
+                },
+              },
+              required: ['name', 'path_globs', 'blueprint_secs', 'acceptance', 'steps'],
             },
           },
         },
@@ -113,11 +140,17 @@ const FE_VERDICT = { type: 'object', additionalProperties: false, properties: { 
 
 phase('Plan')
 const plan = await agent(
-  `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). Produce a concrete build plan: the build command + test command (hints: build=${buildCmdHint}, test=${testCmdHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the foundation (scaffold + shared contracts / Wave-0 module to build and FREEZE first); the crown-jewel (the security-critical or core-invariant component to verify hardest, plus the exact invariant); any risky external deps/toolchain that need an up-front spike before building; and the ordered build WAVES. DEFAULT TO SERIAL — most projects are a near-linear dependency chain, so prefer fewer, coarser modules built one at a time (a single agent can implement several small, related files in sequence). Split a wave into PARALLEL modules ONLY when they are genuinely independent (disjoint files, no compile-time dependency between them in that wave) AND each is large/self-contained enough that giving it its own focused agent context beats one agent doing them in sequence — here parallelism buys context isolation more than wall-clock (e.g. a single-crate build shares one target-dir lock, so concurrent builds mostly serialize). For each module give owned path-globs, the blueprint sections it implements, and machine-checkable acceptance criteria; modules sharing a wave MUST own disjoint files. ALSO: if the project has a USER-FACING UI, produce \`fe_verify\` — how to serve it LIVE (serve_cmd + any backend/seed bring-up + a ready_check), the base_url, the routes/surfaces to screenshot-verify (each with what MUST be visible), and key flows — so a live VISUAL check can run (compile-green never proves a page actually renders). OMIT \`fe_verify\` for a non-UI project.${wireframesDir ? ` An APPROVED wireframe set lives at ${wireframesDir} — derive each route's "expect" from its frame file (name the frame in the expect): the expectation is a STRUCTURAL match to the frame (same hierarchy, same primary action), never a pixel match.` : ''} Constraints: ${constraints}. Return structured.`,
+  `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). Produce a concrete build plan: the build command + test command (hints: build=${buildCmdHint}, test=${testCmdHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the foundation (scaffold + shared contracts / Wave-0 module to build and FREEZE first); the crown-jewel (the security-critical or core-invariant component to verify hardest, plus the exact invariant); any risky external deps/toolchain that need an up-front spike before building; and the ordered build WAVES. DEFAULT TO SERIAL — most projects are a near-linear dependency chain, so prefer fewer, coarser modules built one at a time (a single agent can implement several small, related files in sequence). Split a wave into PARALLEL modules ONLY when they are genuinely independent (disjoint files, no compile-time dependency between them in that wave) AND each is large/self-contained enough that giving it its own focused agent context beats one agent doing them in sequence — here parallelism buys context isolation more than wall-clock (e.g. a single-crate build shares one target-dir lock, so concurrent builds mostly serialize). For each module give owned path-globs, the blueprint sections it implements, and machine-checkable acceptance criteria; modules sharing a wave MUST own disjoint files. THEN SPLIT EACH MODULE INTO ORDERED \`steps\` OF \`parts\` — two levels, and getting the split right is the single biggest lever on what this build costs: a MODULE is the CORRECTNESS unit (6-10 of them, hard max 12; if the blueprint names its phases, use those), while its PARTS are the WORK unit (the individual blueprint work-items, each implemented by its own fresh short-lived agent). Parts in one step run in parallel and must own disjoint files; steps run in order. File collisions inside a module are resolved by ORDERING PARTS INTO STEPS, never by creating more modules, and one work-item is a part, never a module. ALSO: if the project has a USER-FACING UI, produce \`fe_verify\` — how to serve it LIVE (serve_cmd + any backend/seed bring-up + a ready_check), the base_url, the routes/surfaces to screenshot-verify (each with what MUST be visible), and key flows — so a live VISUAL check can run (compile-green never proves a page actually renders). OMIT \`fe_verify\` for a non-UI project.${wireframesDir ? ` An APPROVED wireframe set lives at ${wireframesDir} — derive each route's "expect" from its frame file (name the frame in the expect): the expectation is a STRUCTURAL match to the frame (same hierarchy, same primary action), never a pixel match.` : ''} Constraints: ${constraints}. Return structured.`,
   { label: 'plan-build', phase: 'Plan', agentType: 'general-purpose', model: HEAVY, schema: PLAN_SCHEMA })
 
 const ENV = plan.env_prefix || envPrefix
 const B = plan.build_cmd, T = plan.test_cmd
+
+// Surface the plan's SHAPE before spending anything on it — module count is the dominant cost,
+// and it is knowable here, minutes into a run that may last all night.
+const ALL_MODULES = (plan.waves || []).flatMap((w) => w.modules || [])
+const ALL_PARTS = ALL_MODULES.reduce((n, m) => n + (m.steps || []).reduce((k, s) => k + ((s.parts || []).length), 0), 0)
+log(`Plan: ${ALL_MODULES.length} modules over ${(plan.waves || []).length} waves, ${ALL_PARTS} parts. Modules are the dominant cost — 6-10 is the target; over 12 means the blueprint got split too fine.`)
 
 // --- WIP checkpointing: commit + push to a feature branch at safe barriers, so an OOM/crash mid-build never loses work ---
 const CKPT_SCHEMA = { type: 'object', additionalProperties: false, properties: { committed: { type: 'boolean' }, pushed: { type: 'boolean' }, branch: { type: 'string' }, note: { type: 'string' } }, required: ['committed', 'pushed', 'branch', 'note'] }
@@ -155,10 +188,32 @@ if (!fverdict.pass) {
 }
 await checkpoint('foundation')
 
+// A module is built by a fan-out of PARTS, then one INTEGRATOR, then the unchanged adversarial
+// verify + bounded fix loop. Why the split:
+//   • Context. One agent implementing every item in a module carries every item's tool output
+//     for the module's whole life, re-reading all of it each turn — so a long module agent costs
+//     quadratically in its own turn count. A fresh agent per part resets that.
+//   • The test command is a SHARED, SERIALIZING resource (one database/fixture set, one build
+//     lock). Parts running it concurrently corrupt each other, so parts may only compile
+//     (`build_cmd`) and the integrator alone runs the tests.
+// Foundation already froze the shared contracts, so parts code against a stable interface.
+// The module stays the correctness unit: verify still judges the whole thing, once.
 async function buildModule(m) {
+  const steps = (m.steps || []).filter((s) => s && s.parts && s.parts.length)
+  const landed = []
+  for (let i = 0; i < steps.length; i++) {
+    const prior = landed.length ? `\n\nALREADY LANDED in this module by earlier steps — build on it, never redo or revert it:\n${landed.map((x) => '  - ' + x).join('\n')}` : ''
+    const done = await parallel(steps[i].parts.map((p) => () => agent(
+      `Implement ONE PART of module "${m.name}" per ${blueprintPath} ${m.blueprint_secs}. Repo: ${repoPath}.\n\nYOUR PART — ${p.id}: ${p.spec}\nYOU OWN ONLY: ${p.paths}. Other parts are being implemented in parallel right now and own the other files; touching a file you do not own will be overwritten and will break them. The shared contracts are frozen — build against them, never edit them.\n\nThe module as a whole is aiming at: ${m.acceptance}. You are responsible for YOUR part of that, not all of it.${prior}\n\nDO NOT run \`${T}\` or any test suite, and do not start/stop/reset any database, container, or other shared service — a sibling part is using them right now and a concurrent run corrupts both. You MAY run \`${ENV} ${B}\` to confirm it compiles. An integrator runs the tests after this step and fixes cross-part breakage.\n\nNever stub or delete tests to pass. Report what you changed, precisely enough that the integrator can wire it up.`,
+      { label: `part:${m.name}/${p.id}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
+      .then((r) => `${p.id}: ${(r && r.summary) || 'no report returned'}`)))
+    landed.push(...done.filter(Boolean))
+  }
   let impl = await agent(
-    `Implement module "${m.name}" per ${blueprintPath} ${m.blueprint_secs}. It owns ONLY these paths: ${m.path_globs} — do not touch other modules' files. Acceptance: ${m.acceptance}. The shared contracts are frozen — build against them. Run \`${ENV} ${B}\` and the module's tests; fix until green. Never stub/delete tests to pass.`,
-    { label: `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
+    steps.length
+      ? `INTEGRATE module "${m.name}" in ${repoPath}. Its parts were just implemented by separate agents that each saw only their own slice and were forbidden from running tests, so the module has never been built and tested as a whole.\n\nWhat they report landing:\n${landed.map((x) => '  - ' + x).join('\n')}\n\nRun \`${ENV} ${B}\` then \`${ENV} ${T}\` and drive the module to green. Fix CROSS-PART breakage — wiring, imports/exports, trait/interface and signature mismatches, a missing call site, duplicated or conflicting edits, forgotten registrations. Do NOT re-litigate a part's design choices, and do NOT rewrite work that is merely unfamiliar; if a part looks wrong rather than unwired, note it as a deviation and let the verifier judge it. Acceptance for the whole module: ${m.acceptance}. Per ${blueprintPath} ${m.blueprint_secs}. The shared contracts are frozen. Never stub/delete tests to pass.`
+      : `Implement module "${m.name}" per ${blueprintPath} ${m.blueprint_secs}. It owns ONLY these paths: ${m.path_globs} — do not touch other modules' files. Acceptance: ${m.acceptance}. The shared contracts are frozen — build against them. Run \`${ENV} ${B}\` and the module's tests; fix until green. Never stub/delete tests to pass.`,
+    { label: steps.length ? `integrate:${m.name}` : `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
   let v = await agent(
     `Adversarially verify module "${m.name}" vs ${blueprintPath} ${m.blueprint_secs} and acceptance: ${m.acceptance}. Hunt for incompleteness, bugs, unsafety, blueprint divergence, and trivially-passing tests. Run \`${ENV} ${T}\` for it. pass=false with concrete issues if wrong.`,
     { label: `verify:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })

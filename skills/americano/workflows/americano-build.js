@@ -42,10 +42,12 @@ const PLAN_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
     gate_cmd: { type: 'string', description: 'The single command that builds AND tests the repo to green (the existing green gate).' },
+    check_cmd: { type: 'string', description: 'The CHEAP, SAFE subset of the gate a part-agent may run while writing code: compile/typecheck only, touching NO database, container, or shared service (e.g. `cargo check`, `tsc --noEmit`, the gate\'s own --check-only flag). Parts run this; only the integrator runs the full gate. Empty string if the repo has no such command — then parts run nothing.' },
     env_prefix: { type: 'string', description: 'Shell prefix needed before the gate (PATH etc.), or empty string.' },
     invariant_to_protect: { type: 'string', description: 'The existing load-bearing invariant this change must NOT break (the crown jewel to verify hardest), AND how to assert it.' },
     waves: {
-      type: 'array', description: 'Ordered build waves (barrier between waves). Work-items within a wave touch DISJOINT files and build in parallel. Taken from the blueprint own DAG.',
+      type: 'array',
+      description: 'Ordered build waves (barrier between waves); modules within a wave run in parallel. A MODULE is the CORRECTNESS unit — one thing you would want independently proven correct, describable to a reviewer in one sentence. AIM FOR 6-10 MODULES TOTAL, HARD MAX 12. If the blueprint names its own phases/stages, use THOSE as the modules — that decomposition is almost always the right one. NEVER split a phase into more modules to make files disjoint (that is what a module\'s `steps` are for), and NEVER map one blueprint work-item to one module (items are `steps[].parts`; a module holding a dozen items is normal and good). Module count is the dominant cost of a build: every module pays a fixed orientation + adversarial-verify + fix-loop tax that does NOT shrink when the module does, so 30 small modules cost several times what 10 coherent ones cost for the same code.',
       items: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -54,8 +56,35 @@ const PLAN_SCHEMA = {
             type: 'array',
             items: {
               type: 'object', additionalProperties: false,
-              properties: { name: { type: 'string' }, path_globs: { type: 'string' }, blueprint_secs: { type: 'string' }, acceptance: { type: 'string' } },
-              required: ['name', 'path_globs', 'blueprint_secs', 'acceptance'],
+              properties: {
+                name: { type: 'string' },
+                path_globs: { type: 'string' },
+                blueprint_secs: { type: 'string' },
+                acceptance: { type: 'string', description: 'Machine-checkable acceptance for the MODULE AS A WHOLE — this is what the adversarial verifier checks.' },
+                steps: {
+                  type: 'array',
+                  description: 'The module\'s work split into ORDERED steps. Parts within one step run in PARALLEL and so MUST own disjoint files; steps run in sequence, so a later step may build on an earlier one. Split generously — each part gets its own FRESH agent context, and that is the main lever on build cost (one agent implementing ten items accumulates all ten items\' context; ten agents do not). When two items collide on a file, put them in consecutive steps rather than merging them into one part. A step holding a single part is fine.',
+                  items: {
+                    type: 'object', additionalProperties: false,
+                    properties: {
+                      parts: {
+                        type: 'array',
+                        items: {
+                          type: 'object', additionalProperties: false,
+                          properties: {
+                            id: { type: 'string', description: 'The blueprint work-item id (e.g. W3.2), or a short slug if the blueprint does not number them.' },
+                            spec: { type: 'string', description: 'What this one part must implement, and its own acceptance criterion.' },
+                            paths: { type: 'string', description: 'The files this part owns. Must be disjoint from every other part in the SAME step.' },
+                          },
+                          required: ['id', 'spec', 'paths'],
+                        },
+                      },
+                    },
+                    required: ['parts'],
+                  },
+                },
+              },
+              required: ['name', 'path_globs', 'blueprint_secs', 'acceptance', 'steps'],
             },
           },
         },
@@ -63,7 +92,7 @@ const PLAN_SCHEMA = {
       },
     },
   },
-  required: ['gate_cmd', 'env_prefix', 'invariant_to_protect', 'waves'],
+  required: ['gate_cmd', 'check_cmd', 'env_prefix', 'invariant_to_protect', 'waves'],
 }
 const STATUS = { type: 'object', additionalProperties: false, properties: { ok: { type: 'boolean' }, summary: { type: 'string' }, gate_tail: { type: 'string' }, deviations: { type: 'array', items: { type: 'string' } } }, required: ['ok', 'summary', 'gate_tail', 'deviations'] }
 const VERDICT = { type: 'object', additionalProperties: false, properties: { pass: { type: 'boolean' }, blocking_issues: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } }, required: ['pass', 'blocking_issues', 'notes'] }
@@ -73,11 +102,18 @@ const FINDINGS = { type: 'object', additionalProperties: false, properties: { di
 
 phase('Plan')
 const plan = await agent(
-  `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). It targets a BOUNDED change to an EXISTING, already-green codebase — there is NO project to scaffold and NO foundation to freeze. Produce: the repo's green-gate command (build+test in one; hint: ${gateHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the existing INVARIANT this change must not break (the crown jewel + how to assert it); and the ordered build WAVES taken from the blueprint's OWN work-item/DAG section — work-items within a wave MUST touch disjoint files (so they build in parallel without collision). Give each work-item owned path-globs, the blueprint sections it implements, and machine-checkable acceptance criteria. Do NOT invent a scaffold/foundation step. Constraints: ${constraints}. Return structured.`,
+  `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). It targets a BOUNDED change to an EXISTING, already-green codebase — there is NO project to scaffold and NO foundation to freeze. Produce: the repo's green-gate command (build+test in one; hint: ${gateHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the cheap compile-only \`check_cmd\` a part-agent may run safely; the existing INVARIANT this change must not break (the crown jewel + how to assert it); and the ordered build WAVES.\n\nTWO LEVELS, and getting the split right is the single biggest lever on what this build costs:\n• A MODULE is the CORRECTNESS unit — the granularity at which one adversarial verifier asks "is this whole coherent thing right?". Target 6-10, hard max 12. If the blueprint names its own phases, USE THEM AS THE MODULES.\n• A module's STEPS/PARTS are the WORK unit — the blueprint's individual work-items, each implemented by its own fresh short-lived agent. Parts in one step run in parallel and must own disjoint files; steps run in order.\n\nSo file collisions are resolved by ORDERING PARTS INTO STEPS, never by creating more modules. Do NOT map one work-item to one module: a module with a dozen parts is the expected shape. Do NOT invent a scaffold/foundation step. Constraints: ${constraints}. Return structured.`,
   { label: 'plan-build', phase: 'Plan', agentType: 'general-purpose', model: HEAVY, schema: PLAN_SCHEMA })
 
 const ENV = plan.env_prefix || envPrefix
 const G = plan.gate_cmd
+const CHECK = plan.check_cmd || ''
+
+// Surface the plan's SHAPE before spending anything on it — module count is the dominant cost,
+// and it is knowable here, minutes into a run that may last all night.
+const ALL_MODULES = (plan.waves || []).flatMap((w) => w.modules || [])
+const ALL_PARTS = ALL_MODULES.reduce((n, m) => n + (m.steps || []).reduce((k, s) => k + ((s.parts || []).length), 0), 0)
+log(`Plan: ${ALL_MODULES.length} modules over ${(plan.waves || []).length} waves, ${ALL_PARTS} parts. Modules are the dominant cost — 6-10 is the target; over 12 means the blueprint got split too fine.`)
 
 // --- WIP checkpointing: commit + push to a feature branch at safe barriers, so an OOM/crash mid-build never loses work ---
 const CKPT_SCHEMA = { type: 'object', additionalProperties: false, properties: { committed: { type: 'boolean' }, pushed: { type: 'boolean' }, branch: { type: 'string' }, note: { type: 'string' } }, required: ['committed', 'pushed', 'branch', 'note'] }
@@ -108,10 +144,31 @@ if (!base.green) {
 }
 log('Baseline green — building the waves.')
 
+// A module is built by a fan-out of PARTS, then one INTEGRATOR, then the unchanged
+// adversarial verify + bounded fix loop. Why the split:
+//   • Context. One agent implementing every item in a module accumulates every item's tool
+//     output for the module's whole life, and each turn re-reads all of it — so a long module
+//     agent costs quadratically in its own turn count. A fresh agent per part resets that.
+//   • The gate is a SHARED, SERIALIZING resource (one dev database, one build lock). Parts
+//     running it concurrently corrupt each other's state, so parts get `check_cmd` (compile
+//     only) and the integrator alone owns the real gate.
+// The module stays the correctness unit: verify still judges the whole thing, once.
 async function buildModule(m) {
+  const steps = (m.steps || []).filter((s) => s && s.parts && s.parts.length)
+  const landed = []
+  for (let i = 0; i < steps.length; i++) {
+    const prior = landed.length ? `\n\nALREADY LANDED in this module by earlier steps — build on it, never redo or revert it:\n${landed.map((x) => '  - ' + x).join('\n')}` : ''
+    const done = await parallel(steps[i].parts.map((p) => () => agent(
+      `Implement ONE PART of module "${m.name}" in the EXISTING repo at ${repoPath}, per ${blueprintPath} ${m.blueprint_secs}.\n\nYOUR PART — ${p.id}: ${p.spec}\nYOU OWN ONLY: ${p.paths}. Other parts are being implemented in parallel right now and own the other files; touching a file you do not own will be overwritten and will break them.\n\nThe module as a whole is aiming at: ${m.acceptance}. You are responsible for YOUR part of that, not all of it.${prior}\n\nDO NOT run \`${G}\` or any test suite, and do not start/stop/reset any database, container, or other shared service — a sibling part is using them right now and a concurrent run corrupts both. ${CHECK ? `You MAY run \`${ENV} ${CHECK}\` to confirm it compiles.` : 'This repo has no safe compile-only command, so run nothing.'} An integrator runs the real gate after this step and fixes cross-part breakage.\n\nNever stub or delete tests to pass; never weaken the protected invariant (${plan.invariant_to_protect}). Report what you changed, precisely enough that the integrator can wire it up.`,
+      { label: `part:${m.name}/${p.id}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
+      .then((r) => `${p.id}: ${(r && r.summary) || 'no report returned'}`)))
+    landed.push(...done.filter(Boolean))
+  }
   let impl = await agent(
-    `Implement work-item "${m.name}" per ${blueprintPath} ${m.blueprint_secs} in the EXISTING repo at ${repoPath}. It owns ONLY these paths: ${m.path_globs} — do not touch other work-items' files. Acceptance: ${m.acceptance}. Build against the existing code/contracts (they already compile). Run \`${ENV} ${G}\` (or the narrowest subset that covers this item) and fix until green for this item. Never stub/delete tests to pass; never weaken the protected invariant (${plan.invariant_to_protect}).`,
-    { label: `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
+    steps.length
+      ? `INTEGRATE module "${m.name}" in ${repoPath}. Its parts were just implemented by separate agents that each saw only their own slice and were forbidden from running the gate, so the module has never been built or tested as a whole.\n\nWhat they report landing:\n${landed.map((x) => '  - ' + x).join('\n')}\n\nRun \`${ENV} ${G}\` and drive it to green. Fix CROSS-PART breakage — wiring, imports/exports, signature and type mismatches, a missing call site, duplicated or conflicting edits, forgotten registrations. Do NOT re-litigate a part's design choices, and do NOT rewrite work that is merely unfamiliar; if a part looks wrong rather than unwired, note it as a deviation and let the verifier judge it. Acceptance for the whole module: ${m.acceptance}. Per ${blueprintPath} ${m.blueprint_secs}. Never stub/delete tests to pass; never weaken the protected invariant (${plan.invariant_to_protect}).`
+      : `Implement work-item "${m.name}" per ${blueprintPath} ${m.blueprint_secs} in the EXISTING repo at ${repoPath}. It owns ONLY these paths: ${m.path_globs} — do not touch other work-items' files. Acceptance: ${m.acceptance}. Build against the existing code/contracts (they already compile). Run \`${ENV} ${G}\` (or the narrowest subset that covers this item) and fix until green for this item. Never stub/delete tests to pass; never weaken the protected invariant (${plan.invariant_to_protect}).`,
+    { label: steps.length ? `integrate:${m.name}` : `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
   let v = await agent(
     `Adversarially verify work-item "${m.name}" vs ${blueprintPath} ${m.blueprint_secs} and acceptance: ${m.acceptance}. Hunt for incompleteness, bugs, unsafety, blueprint divergence, references to nonexistent tables/functions/columns, and trivially-passing tests. Confirm it does NOT weaken the protected invariant (${plan.invariant_to_protect}). pass=false with concrete issues if wrong.`,
     { label: `verify:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })
