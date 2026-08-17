@@ -7,7 +7,7 @@ export const meta = {
     { title: 'Baseline', detail: 'confirm the repo is green at HEAD so any new red is ours; refuse to build on red' },
     { title: 'Modules', detail: 'ordered waves of disjoint work-items: impl -> adversarial verify -> bounded fix loop' },
     { title: 'Green', detail: 'integrate; loop the repo gate until fully green' },
-    { title: 'Simplify', detail: 'dedicated apex pass that APPLIES load-bearing simplifications (gate-protected, invariant-barred) so the final reviews see the final shape' },
+    { title: 'Simplify', detail: 'dedicated judge-tier pass that APPLIES load-bearing simplifications (gate-protected, invariant-barred) so the final reviews see the final shape' },
     { title: 'Review', detail: 'adversarial security + correctness on the post-simplify code -> triage + fix high-sev -> bounded delta re-review loop (all three lenses) until a clean round' },
     { title: 'Checkpoint', detail: 'commit + push WIP to the feature branch at every barrier so an OOM/crash never loses work (no PR, no merge)' },
   ],
@@ -23,20 +23,39 @@ const gateHint = A.gateCmd || 'auto-detect the repo green gate from the blueprin
 const constraints = A.constraints || 'none beyond the blueprint'
 const CKPT = A.checkpoint !== false                  // WIP checkpointing default ON; pass checkpoint:false to disable
 const CKPT_REMOTE = A.checkpointRemote || 'origin'   // remote to push WIP checkpoints to
-// Model tiers — every agent() call is pinned to one of three tiers so a fan-out never silently inherits
-// an expensive main-loop model. `grunt` covers mechanical stages (baseline gate, checkpoints); `heavy`
-// covers judgment stages (plan, build, verify, fix, integrate, triage); `apex` covers the simplification
-// wave (it APPLIES load-bearing simplifications, not just reports them — simplification is what keeps a
-// codebase from growing without bound; it takes the smartest model, not the cheapest) and the final
-// adversarial review lenses (security, correctness, and simplify on delta rounds). NO review ever runs
-// below heavy. Defaults: grunt='sonnet'; heavy=undefined (inherit the session model — set
-// models:{heavy:'opus'} when orchestrating from a pricier main-loop model); apex=falls back to heavy,
-// pure opt-in — set models:{apex:'fable'} to upgrade just the final reviews.
-const M = A.models || {}                 // { grunt?: string, heavy?: string, apex?: string }
-const GRUNT = ('grunt' in M) ? M.grunt : 'sonnet'
-const HEAVY = M.heavy
-const APEX = ('apex' in M) ? M.apex : HEAVY
+// Model + effort are PRESCRIPTIVE — hardcoded per call, nothing inherits the session (change
+// here, in code). BUILD ('sonnet') at effort 'high' writes the code: parts, integrate, every
+// fix loop, the green rounds, triage+fix (its findings arrive from judge reviewers with
+// severity + suggested fix, and the judge delta re-review checks its work next round);
+// checkpoints run BUILD at 'medium' (mechanical git work) and the baseline gate at 'low' (it
+// only runs the gate and reports — a weak read safely aborts, never corrupts). JUDGE ('fable')
+// designs and reviews: plan-build at effort 'high' (once per run, and the module split is the
+// biggest cost/correctness lever — its mistakes propagate everywhere); at 'medium', the
+// in-loop checks: every module verify, the simplification wave — which
+// APPLIES load-bearing simplifications, not just reports them — and the final adversarial
+// review lenses. A judge call that dies falls back to opus via agentRetry, never lower.
+const BUILD = 'sonnet'
+const JUDGE = 'fable'
 if (!blueprintPath) throw new Error('args.blueprintPath is required (absolute path to the blueprint)')
+
+// Retry an agent() that returns null — a terminal error after the harness's own retries. A
+// fable-pinned call retries ONCE on fable (a transient capacity blip recovers there), and only
+// THEN falls back to opus — that covers the won't-do-it case (e.g. a security-review lens
+// getting flagged), which retrying on fable can't fix. Non-fable calls retry on their own
+// model. So opus only ever appears as the last-resort fallback on judge calls, never on
+// implementation. Use for judgment calls where a dropped agent = lost coverage.
+async function agentRetry(prompt, opts, tries = 2) {
+  let r = await agent(prompt, opts)
+  for (let i = 1; r == null && i <= tries; i++) {
+    const m = opts && opts.model
+    const toOpus = i > 1 && typeof m === 'string' && m.toLowerCase().includes('fable')
+    const model = toOpus ? 'opus' : m
+    const label = (opts && opts.label) ? `${opts.label}:retry${i}${toOpus ? '-opus' : ''}` : undefined
+    log(`agent "${(opts && opts.label) || 'unlabeled'}" returned null — retry ${i}/${tries}${toOpus ? ' on opus (fable fallback)' : ''}`)
+    r = await agent(prompt, { ...opts, model, label })
+  }
+  return r
+}
 
 const PLAN_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -101,9 +120,9 @@ const BASE = { type: 'object', additionalProperties: false, properties: { green:
 const FINDINGS = { type: 'object', additionalProperties: false, properties: { dimension: { type: 'string' }, findings: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { severity: { type: 'string' }, title: { type: 'string' }, location: { type: 'string' }, detail: { type: 'string' }, suggested_fix: { type: 'string' } }, required: ['severity', 'title', 'location', 'detail', 'suggested_fix'] } }, summary: { type: 'string' } }, required: ['dimension', 'findings', 'summary'] }
 
 phase('Plan')
-const plan = await agent(
+const plan = await agentRetry(
   `Read the blueprint at ${blueprintPath} IN FULL (repo: ${repoPath}). It targets a BOUNDED change to an EXISTING, already-green codebase — there is NO project to scaffold and NO foundation to freeze. Produce: the repo's green-gate command (build+test in one; hint: ${gateHint}; env-prefix hint: ${JSON.stringify(envPrefix)}); the cheap compile-only \`check_cmd\` a part-agent may run safely; the existing INVARIANT this change must not break (the crown jewel + how to assert it); and the ordered build WAVES.\n\nTWO LEVELS, and getting the split right is the single biggest lever on what this build costs:\n• A MODULE is the CORRECTNESS unit — the granularity at which one adversarial verifier asks "is this whole coherent thing right?". Target 6-10, hard max 12. If the blueprint names its own phases, USE THEM AS THE MODULES.\n• A module's STEPS/PARTS are the WORK unit — the blueprint's individual work-items, each implemented by its own fresh short-lived agent. Parts in one step run in parallel and must own disjoint files; steps run in order.\n\nSo file collisions are resolved by ORDERING PARTS INTO STEPS, never by creating more modules. Do NOT map one work-item to one module: a module with a dozen parts is the expected shape. Do NOT invent a scaffold/foundation step. Constraints: ${constraints}. Return structured.`,
-  { label: 'plan-build', phase: 'Plan', agentType: 'general-purpose', model: HEAVY, schema: PLAN_SCHEMA })
+  { label: 'plan-build', phase: 'Plan', agentType: 'general-purpose', model: JUDGE, effort: 'high', schema: PLAN_SCHEMA })
 
 const ENV = plan.env_prefix || envPrefix
 const G = plan.gate_cmd
@@ -126,7 +145,7 @@ async function checkpoint(stage) {
       `2. \`git add -A\`, then commit: "checkpoint(${stage}): <one-line summary of progress so far>". If nothing is staged, skip the commit.\n` +
       `3. Push to ${CKPT_REMOTE}, setting upstream on first push: \`git push -u ${CKPT_REMOTE} HEAD\`.\n` +
       `This is a safety checkpoint ONLY: do NOT open a PR, do NOT merge, do NOT touch the default branch. If ${CKPT_REMOTE} is missing or unreachable, still commit locally and report pushed=false with the reason — NEVER fail, block, or revert the build because of a git error.${ENV ? (' Shell prefix: ' + ENV) : ''} Report what you committed and whether you pushed.`,
-      { label: `checkpoint:${stage}`, phase: 'Checkpoint', agentType: 'general-purpose', model: GRUNT, effort: 'low', schema: CKPT_SCHEMA })
+      { label: `checkpoint:${stage}`, phase: 'Checkpoint', agentType: 'general-purpose', model: BUILD, effort: 'medium', schema: CKPT_SCHEMA })
   } catch (e) {
     log(`Checkpoint(${stage}) errored (non-fatal): ${e && e.message ? e.message : e}`)
     return null
@@ -136,7 +155,7 @@ async function checkpoint(stage) {
 phase('Baseline')
 const base = await agent(
   `Confirm the repo at ${repoPath} is GREEN at HEAD before we change anything, so any new red is OURS. Run \`${ENV} ${G}\`. Do NOT modify code. Report green=true ONLY if it passes cleanly; if red, summarize what is already failing.${ENV ? (' Shell prefix: ' + ENV) : ''}`,
-  { label: 'baseline-green', phase: 'Baseline', agentType: 'general-purpose', model: GRUNT, schema: BASE })
+  { label: 'baseline-green', phase: 'Baseline', agentType: 'general-purpose', model: BUILD, effort: 'low', schema: BASE })
 if (!base.green) {
   log(`Baseline is RED — refusing to build on a red repo. ${base.summary}`)
   // @ts-expect-error top-level return — the Workflow runtime wraps this script body in an async function
@@ -160,7 +179,7 @@ async function buildModule(m) {
     const prior = landed.length ? `\n\nALREADY LANDED in this module by earlier steps — build on it, never redo or revert it:\n${landed.map((x) => '  - ' + x).join('\n')}` : ''
     const done = await parallel(steps[i].parts.map((p) => () => agent(
       `Implement ONE PART of module "${m.name}" in the EXISTING repo at ${repoPath}, per ${blueprintPath} ${m.blueprint_secs}.\n\nYOUR PART — ${p.id}: ${p.spec}\nYOU OWN ONLY: ${p.paths}. Other parts are being implemented in parallel right now and own the other files; touching a file you do not own will be overwritten and will break them.\n\nThe module as a whole is aiming at: ${m.acceptance}. You are responsible for YOUR part of that, not all of it.${prior}\n\nDO NOT run \`${G}\` or any test suite, and do not start/stop/reset any database, container, or other shared service — a sibling part is using them right now and a concurrent run corrupts both. ${CHECK ? `You MAY run \`${ENV} ${CHECK}\` to confirm it compiles.` : 'This repo has no safe compile-only command, so run nothing.'} An integrator runs the real gate after this step and fixes cross-part breakage.\n\nNever stub or delete tests to pass; never weaken the protected invariant (${plan.invariant_to_protect}). Report what you changed, precisely enough that the integrator can wire it up.`,
-      { label: `part:${m.name}/${p.id}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
+      { label: `part:${m.name}/${p.id}`, phase: 'Modules', agentType: 'general-purpose', model: BUILD, effort: 'high', schema: STATUS })
       .then((r) => `${p.id}: ${(r && r.summary) || 'no report returned'}`)))
     landed.push(...done.filter(Boolean))
   }
@@ -168,15 +187,15 @@ async function buildModule(m) {
     steps.length
       ? `INTEGRATE module "${m.name}" in ${repoPath}. Its parts were just implemented by separate agents that each saw only their own slice and were forbidden from running the gate, so the module has never been built or tested as a whole.\n\nWhat they report landing:\n${landed.map((x) => '  - ' + x).join('\n')}\n\nRun \`${ENV} ${G}\` and drive it to green. Fix CROSS-PART breakage — wiring, imports/exports, signature and type mismatches, a missing call site, duplicated or conflicting edits, forgotten registrations. Do NOT re-litigate a part's design choices, and do NOT rewrite work that is merely unfamiliar; if a part looks wrong rather than unwired, note it as a deviation and let the verifier judge it. Acceptance for the whole module: ${m.acceptance}. Per ${blueprintPath} ${m.blueprint_secs}. Never stub/delete tests to pass; never weaken the protected invariant (${plan.invariant_to_protect}).`
       : `Implement work-item "${m.name}" per ${blueprintPath} ${m.blueprint_secs} in the EXISTING repo at ${repoPath}. It owns ONLY these paths: ${m.path_globs} — do not touch other work-items' files. Acceptance: ${m.acceptance}. Build against the existing code/contracts (they already compile). Run \`${ENV} ${G}\` (or the narrowest subset that covers this item) and fix until green for this item. Never stub/delete tests to pass; never weaken the protected invariant (${plan.invariant_to_protect}).`,
-    { label: steps.length ? `integrate:${m.name}` : `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
-  let v = await agent(
+    { label: steps.length ? `integrate:${m.name}` : `build:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: BUILD, effort: 'high', schema: STATUS })
+  let v = await agentRetry(
     `Adversarially verify work-item "${m.name}" vs ${blueprintPath} ${m.blueprint_secs} and acceptance: ${m.acceptance}. Hunt for incompleteness, bugs, unsafety, blueprint divergence, references to nonexistent tables/functions/columns, and trivially-passing tests. Confirm it does NOT weaken the protected invariant (${plan.invariant_to_protect}). pass=false with concrete issues if wrong.`,
-    { label: `verify:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })
+    { label: `verify:${m.name}`, phase: 'Modules', agentType: 'general-purpose', model: JUDGE, effort: 'medium', schema: VERDICT })
   let r = 0
-  while (!v.pass && r < 2) {
+  while (v && !v.pass && r < 2) {
     r++
-    impl = await agent(`Fix work-item "${m.name}": ${JSON.stringify(v.blocking_issues)}. Per ${blueprintPath} ${m.blueprint_secs}. Re-run the gate. Report.`, { label: `fix:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: STATUS })
-    v = await agent(`Re-verify "${m.name}" (same adversarial protocol). Verdict.`, { label: `reverify:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', model: HEAVY, schema: VERDICT })
+    impl = await agent(`Fix work-item "${m.name}": ${JSON.stringify(v.blocking_issues)}. Per ${blueprintPath} ${m.blueprint_secs}. Re-run the gate. Report.`, { label: `fix:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', model: BUILD, effort: 'high', schema: STATUS })
+    v = await agentRetry(`Re-verify "${m.name}" (same adversarial protocol). Verdict.`, { label: `reverify:${m.name}#${r}`, phase: 'Modules', agentType: 'general-purpose', model: JUDGE, effort: 'medium', schema: VERDICT })
   }
   return { module: m.name, ok: impl && impl.ok, passed: v && v.pass }
 }
@@ -195,16 +214,16 @@ while (!green && round < 4) {
   round++
   integ = await agent(
     `Integration round ${round}: run \`${ENV} ${G}\` across the whole repo. Fix any CROSS-ITEM failures (wiring, interface mismatches, deps, migrations) per ${blueprintPath}. NEVER weaken the protected invariant (${plan.invariant_to_protect}) or delete/ignore tests to go green — fix the real cause. Report green=true ONLY if the gate is fully green; list remaining failures.`,
-    { label: `integrate#${round}`, phase: 'Green', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
+    { label: `integrate#${round}`, phase: 'Green', agentType: 'general-purpose', model: BUILD, effort: 'high', schema: GREEN })
   green = integ.green
 }
 await checkpoint('green')
 
 phase('Simplify')
 const SIMPLIFY = { type: 'object', additionalProperties: false, properties: { applied: { type: 'array', items: { type: 'string' } }, skipped: { type: 'array', items: { type: 'string' } }, green: { type: 'boolean' }, summary: { type: 'string' } }, required: ['applied', 'skipped', 'green', 'summary'] }
-const simplified = await agent(
+const simplified = await agentRetry(
   `SIMPLIFICATION WAVE — the pass that keeps this codebase from growing without bound; be hardcore AND surgical. Review ONLY the change introduced by ${blueprintPath} in ${repoPath} (the diff vs the green baseline) for duplication, dead code, needless indirection, wrong-altitude abstraction, and inconsistent error handling INTRODUCED by the change — then APPLY the load-bearing simplifications directly; do not just report them. Rules: never touch the protected invariant (${plan.invariant_to_protect}) or its tests; never change external behavior; skip anything you judge risky and record why. After applying, run \`${ENV} ${G}\` — it MUST be fully green (never delete/weaken a test to get there; revert your own edit instead).`,
-  { label: 'simplify-wave', phase: 'Simplify', agentType: 'general-purpose', model: APEX, schema: SIMPLIFY })
+  { label: 'simplify-wave', phase: 'Simplify', agentType: 'general-purpose', model: JUDGE, effort: 'medium', schema: SIMPLIFY })
 await checkpoint('simplify')
 
 phase('Review')
@@ -219,16 +238,16 @@ let lenses = [secLens, corLens]              // the simplify lens already ran as
 let scope = `ONLY the change introduced by ${blueprintPath} in ${repoPath} (the diff vs the green baseline; the simplification wave already ran — this is the final shape)`
 while (reviewRound < 3) {                    // 1 full round + up to 2 delta re-review rounds
   reviewRound++
-  const reviews = await parallel(lenses.map((d) => () => agent(
+  const reviews = await parallel(lenses.map((d) => () => agentRetry(
     `${d.p}\nReview ${scope}. Run \`${ENV} ${G}\` if useful. Report findings with severity + location + suggested_fix.`,
-    { label: `review:${d.k}#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: APEX, schema: FINDINGS })))
+    { label: `review:${d.k}#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: JUDGE, effort: 'medium', schema: FINDINGS })))
   const roundF = reviews.filter(Boolean).flatMap((r) => (r.findings || []).map((f) => ({ ...f, dimension: r.dimension, round: reviewRound })))
   allF.push(...roundF)
   const mustFix = roundF.filter((f) => f.severity === 'critical' || f.severity === 'high')
   if (!mustFix.length) { lastRoundFixed = false; break }   // fixpoint: a round with no new high-sev findings ends the review
   triage = await agent(
     `Triage + fix the confirmed high-severity findings: CONFIRM each is real first (reproduce/inspect); fix real ones minimally per ${blueprintPath}; reject false positives with reasons. High-severity SIMPLIFICATION findings are first-class — apply them (the gate protects you), never touching the protected invariant or its tests. Then run \`${ENV} ${G}\` — must be GREEN; never delete a test to pass; never weaken the protected invariant. Do NOT apply medium/low findings unless trivially safe.\nFindings:\n${mustFix.map((f, i) => `${i + 1}. [${f.severity}/${f.dimension}] ${f.title} @ ${f.location}: ${f.detail} | fix: ${f.suggested_fix}`).join('\n')}`,
-    { label: `triage+fix#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: HEAVY, schema: GREEN })
+    { label: `triage+fix#${reviewRound}`, phase: 'Review', agentType: 'general-purpose', model: BUILD, effort: 'high', schema: GREEN })
   lastRoundFixed = true
   await checkpoint('review-fixes-' + reviewRound)  // safety, plus a clean git boundary so the next round can see exactly the delta
   lenses = [secLens, corLens, simLens]       // the fixes changed the code — every lens re-checks, but only the delta

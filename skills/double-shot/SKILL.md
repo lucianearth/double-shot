@@ -51,12 +51,12 @@ The two workflow scripts are bundled **inside this skill's own directory**, unde
 
 ```
 Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/plan-to-blueprint.js",
-           args: { planPath, repoPath, stack, scope, constraints, wireframesDir?, models? } })
+           args: { planPath, repoPath, stack, scope, constraints, wireframesDir? } })
 
 Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/build-from-blueprint.js",
-           args: { blueprintPath, repoPath, envPrefix, wireframesDir?, models? } })   // envPrefix carries shell setup, e.g. PATH
+           args: { blueprintPath, repoPath, envPrefix, wireframesDir? } })   // envPrefix carries shell setup, e.g. PATH
 
-`models` ({ grunt?, heavy?, apex? }) pins every spawned agent to a tier — grunt (mechanical: research readers, checkpoints; default 'sonnet'), heavy (judgment: synthesis, foundation, build/verify, integrate, triage, and the live-frontend judge+fixer — which delegates its token-heavy browser mechanics to a sonnet subagent it spawns while keeping all visual judgment itself; default inherit), or apex (the highest-stakes calls: decompose, subsystem design, crown-jewel foundation verify, the simplification wave — which applies load-bearing simplifications directly, since simplification is what keeps a codebase from growing without bound — and the final review lenses; defaults to heavy so it's pure opt-in). No review ever runs below heavy. Orchestrating from a pricier main-loop model? Pass `models: { heavy: 'opus' }`. Want a frontier model on just planning + reviews? Pass `models: { apex: 'fable' }`.
+Model + effort are prescriptive — hardcoded per call, no args knob, nothing inherits the session (constants at the top of each workflow script). Build ('sonnet', effort 'high') writes the code: research readers, spikes, foundation, module parts, integrate, every fix loop, the green rounds, triage+fix — with checkpoints at 'medium'. Judge ('fable') designs and reviews — the once-per-run planning authors (decompose, subsystem design, synthesis, plan-build) at effort 'high', the in-loop checks at 'medium': crown-jewel foundation verify, every module verify, the live-frontend judge+fixer — which delegates its token-heavy browser mechanics to a sonnet subagent it spawns while keeping all visual judgment itself — the simplification wave (it applies load-bearing simplifications directly, since simplification is what keeps a codebase from growing without bound), the final review lenses, and the wireframe reconcile. A judge call that dies retries once on fable, then falls back to opus — reviews never fall to sonnet, and opus never touches implementation.
 ```
 
 If `${CLAUDE_SKILL_DIR}` isn't available, resolve this installed skill's absolute path (e.g. `~/.claude/skills/double-shot/workflows/…`), or copy the two `.js` files into `~/.claude/workflows/` and invoke by name: `Workflow({ name: "plan-to-blueprint", args: {…} })`. Each workflow runs in the background and returns one structured result; you'll be notified on completion.
