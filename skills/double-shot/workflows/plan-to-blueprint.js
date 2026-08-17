@@ -14,16 +14,14 @@ export const meta = {
 // args: { planPath (required), repoPath?, stack?, scope?, constraints?, wireframesDir? }
 // Some harnesses deliver `args` as a JSON string rather than a parsed object; normalize either way.
 const A = (typeof args === 'string') ? JSON.parse(args) : (args || {})
-// Model tiers — every agent() call is pinned to one of three args-overridable tiers so a fan-out never
-// silently inherits an expensive main-loop model. `grunt` = mechanical (research readers); `heavy` =
-// judgment (synthesis); `apex` = the highest-leverage judgment calls (decompose, subsystem design) —
-// the stages worth a frontier model. Defaults: grunt='sonnet'; heavy=undefined (inherit — set
-// models:{heavy:'opus'} when orchestrating from a pricier main-loop model); apex=falls back to heavy,
-// pure opt-in — set models:{apex:'fable'} to give decompose + design a frontier model.
-const M = A.models || {}                 // { grunt?: string, heavy?: string, apex?: string }
-const GRUNT = ('grunt' in M) ? M.grunt : 'sonnet'
-const HEAVY = M.heavy
-const APEX = ('apex' in M) ? M.apex : HEAVY
+// Model + effort are PRESCRIPTIVE — hardcoded per call, nothing inherits the session (change
+// here, in code). BUILD ('sonnet') at effort 'high' does the research reading. JUDGE ('fable')
+// makes the calls the whole blueprint hangs on — the once-per-run planning authors (decompose,
+// subsystem design, synthesis) run effort 'high' (their mistakes propagate everywhere with
+// nothing above them to catch it); the reconcile check runs 'medium'. A judge call that dies
+// falls back to opus via agentRetry, never lower.
+const BUILD = 'sonnet'
+const JUDGE = 'fable'
 const planPath = A.planPath
 const repoPath = A.repoPath || '.'
 const stack = A.stack || 'choose the best fit for this plan and justify the choice'
@@ -38,18 +36,19 @@ const WIRE = wireframesDir
 
 if (!planPath) throw new Error('args.planPath is required (absolute path to the plan/design doc)')
 
-// Retry an agent() that returns null — a terminal error after the harness's own retries (e.g. a
-// transient "Overloaded" on the fable tier). If the original call was pinned to fable, the retry
-// falls back to opus, so a capacity blip can't leave decompose/design/reconcile with a dropped
-// (null'd, .filter(Boolean)-eaten) agent. Non-null results pass straight through.
+// Retry an agent() that returns null — a terminal error after the harness's own retries. A
+// fable-pinned call retries ONCE on fable (a transient capacity blip recovers there), and only
+// THEN falls back to opus — that covers the won't-do-it case (e.g. a review getting flagged),
+// which retrying on fable can't fix. Non-fable calls retry on their own model. So opus only
+// ever appears as the last-resort fallback on judge calls, never on implementation.
 async function agentRetry(prompt, opts, tries = 2) {
   let r = await agent(prompt, opts)
   for (let i = 1; r == null && i <= tries; i++) {
     const m = opts && opts.model
-    const isFable = typeof m === 'string' && m.toLowerCase().includes('fable')
-    const model = isFable ? 'opus' : m
-    const label = (opts && opts.label) ? `${opts.label}:retry${i}${isFable ? '-opus' : ''}` : undefined
-    log(`agent "${(opts && opts.label) || 'unlabeled'}" returned null — retry ${i}/${tries}${isFable ? ' on opus (fable fallback)' : ''}`)
+    const toOpus = i > 1 && typeof m === 'string' && m.toLowerCase().includes('fable')
+    const model = toOpus ? 'opus' : m
+    const label = (opts && opts.label) ? `${opts.label}:retry${i}${toOpus ? '-opus' : ''}` : undefined
+    log(`agent "${(opts && opts.label) || 'unlabeled'}" returned null — retry ${i}/${tries}${toOpus ? ' on opus (fable fallback)' : ''}`)
     r = await agent(prompt, { ...opts, model, label })
   }
   return r
@@ -119,14 +118,14 @@ phase('Decompose')
 const decomp = await agentRetry(
   `Read the plan at ${planPath} IN FULL. Stack guidance: ${stack}. Scope: ${scope}. Constraints: ${constraints}.\n\n` +
   `Identify two things: (1) the external dependencies / libraries / toolchain that need concrete research before building (with the specific questions to answer for each), and (2) the hard subsystems that need careful up-front design — the parts carrying the project's core invariants, its security-critical paths, or its subtle algorithms (with the design questions for each). Be thorough but don't pad: only list things that genuinely need research/design. Return structured.${WIRE}`,
-  { phase: 'Decompose', agentType: 'general-purpose', model: APEX, schema: DECOMP_SCHEMA })
+  { phase: 'Decompose', agentType: 'general-purpose', model: JUDGE, effort: 'high', schema: DECOMP_SCHEMA })
 
 phase('Research')
 const research = await parallel((decomp.dependencies || []).map((d) => () =>
   agent(
     `Research **${d.name}** for this project (stack: ${stack}). Why it matters: ${d.why}\n\nAnswer concretely: ${d.research_questions}\n\n` +
     `Use WebSearch/WebFetch for CURRENT docs; fall back to your knowledge and explicitly FLAG uncertainty. Read ${planPath} for context. Give concrete, code-shaped API snippets we can build from.`,
-    { label: `research:${d.name}`, phase: 'Research', model: GRUNT, agentType: 'general-purpose', schema: RESEARCH_SCHEMA })))
+    { label: `research:${d.name}`, phase: 'Research', model: BUILD, effort: 'high', agentType: 'general-purpose', schema: RESEARCH_SCHEMA })))
 
 const researchBrief = research.filter(Boolean).map((r) =>
   `### ${r.area}\n${r.summary}\nKey APIs:\n- ${r.key_apis.join('\n- ')}\nRisks:\n- ${r.risks.join('\n- ')}`).join('\n\n')
@@ -136,18 +135,18 @@ const designs = await parallel((decomp.subsystems || []).map((s) => () =>
   agentRetry(
     `Design **${s.name}** for this project. Why it's hard: ${s.why_hard}\n\nAddress: ${s.design_questions}\n\n` +
     `Read ${planPath}. Stack: ${stack}. Keep the plan's stated principles intact. Provide concrete interface signatures (types/traits/DDL/schemas). If this subsystem is security-critical or carries a core invariant, be airtight about how the design enforces it.${WIRE}\n\nResearch context:\n${researchBrief}`,
-    { label: `design:${s.name}`, phase: 'Design', agentType: 'general-purpose', model: APEX, schema: DESIGN_SCHEMA })))
+    { label: `design:${s.name}`, phase: 'Design', agentType: 'general-purpose', model: JUDGE, effort: 'high', schema: DESIGN_SCHEMA })))
 
 const designBrief = designs.filter(Boolean).map((d) =>
   `## ${d.component}\n${d.design}\n\nInterfaces:\n\`\`\`\n${d.interfaces.join('\n')}\n\`\`\`\nOpen questions:\n- ${d.open_questions.join('\n- ')}`).join('\n\n---\n\n')
 
 phase('Synthesize')
-const blueprint = await agent(
+const blueprint = await agentRetry(
   `You are the lead architect. Synthesize the research and designs below into a single coherent, buildable implementation blueprint. Write it to ${repoPath}/BLUEPRINT.md.\n\n` +
   `Sections: overview & stack decision (with concrete library versions from research); workspace/module layout + dependency DAG + build order; each designed subsystem; the data layer; external-service abstractions + deterministic fakes for tests; the test plan (including security tests for any security-critical path and correctness tests for every core invariant); and an ORDERED list of build phases, each with explicit acceptance criteria the autonomous build will execute against.\n\n` +
   `Resolve conflicts between design docs; where they disagree, choose the better option and say why. Keep the plan's principles intact. Be concrete and buildable. After writing the file, return the structured summary.\n\n` +
   `Constraints to honor: ${constraints}${WIRE}${wireframesDir ? `\nIn the blueprint, TRACE every user-facing surface to its frame file in ${wireframesDir}, and write UI acceptance criteria as STRUCTURAL matches to the frame (same hierarchy, same primary action) — never pixel matches.` : ''}\n\n=== RESEARCH ===\n${researchBrief}\n\n=== DESIGNS ===\n${designBrief}`,
-  { label: 'synthesize:blueprint', phase: 'Synthesize', agentType: 'general-purpose', model: HEAVY, schema: BLUEPRINT_SCHEMA })
+  { label: 'synthesize:blueprint', phase: 'Synthesize', agentType: 'general-purpose', model: JUDGE, effort: 'high', schema: BLUEPRINT_SCHEMA })
 
 // After the blueprint exists, confirm the UX contract survived it: technical decisions made during
 // research/design can silently invalidate an approved frame. Drift goes to the human gate, not the build.
@@ -157,7 +156,7 @@ if (wireframesDir) {
   const RECONCILE = { type: 'object', additionalProperties: false, properties: { feasible: { type: 'boolean' }, drift: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { frame: { type: 'string' }, issue: { type: 'string' }, proposal: { type: 'string' }, resolution: { type: 'string', description: "'fix-blueprint' or 'revise-frame' (frame revisions need human re-approval)" } }, required: ['frame', 'issue', 'proposal', 'resolution'] } }, stories_at_risk: { type: 'array', items: { type: 'string' } }, notes: { type: 'string' } }, required: ['feasible', 'drift', 'stories_at_risk', 'notes'] }
   reconcile = await agentRetry(
     `RECONCILE the blueprint against the UX contract. Read ONLY ${blueprint.blueprint_path} and the wireframe set at ${wireframesDir} (stories.md, the frame HTML files, decisions.md) — do not explore anything else. Confirm three things: (1) FEASIBLE — nothing in the blueprint's stack/architecture makes any frame technically infeasible; (2) ACCURATE — no blueprint decision silently changed what a screen must be (data a frame shows that the design doesn't produce, an action that moved, a flow that gained a step); (3) REPRESENTATIVE — every story in stories.md is still served end-to-end by the blueprint's build plan. For each drift: name the frame, the issue, a concrete proposal, and whether the fix belongs in the blueprint ('fix-blueprint') or the wireframe ('revise-frame' — that one needs human re-approval). Return structured.`,
-    { label: 'reconcile:wireframes', phase: 'Reconcile', agentType: 'general-purpose', model: APEX, schema: RECONCILE })
+    { label: 'reconcile:wireframes', phase: 'Reconcile', agentType: 'general-purpose', model: JUDGE, effort: 'medium', schema: RECONCILE })
 }
 
 // @ts-expect-error top-level return — the Workflow runtime wraps this script body in an async function

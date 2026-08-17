@@ -78,26 +78,31 @@ pre-planning conversation, "let's write the user stories" should think this way.
 
 ## Model tiers — put your best model where it counts
 
-Every agent the workflows spawn is pinned to one of three args-overridable
-tiers, so a fan-out never silently inherits an expensive main-loop model:
+Every agent the workflows spawn is pinned to an explicit **model + effort** —
+prescriptive on purpose, no args knob and no inheriting the session; the
+assignment is a design decision that lives in the scripts (constants at the
+top of each), not per-run configuration:
 
-- **`grunt`** — mechanical stages (research readers, baseline gate, checkpoints).
-  Default `'sonnet'`.
-- **`heavy`** — judgment stages (build, verify, fix, integrate, triage).
-  Default: inherit the session model.
-- **`apex`** — the few highest-stakes calls: decompose, design, the adversarial
-  critique, the simplification wave, the final review lenses, the wireframe
-  reconcile. Defaults to heavy, so it's pure opt-in.
+- **build (`'sonnet'`, effort `'high'`)** — everything that writes code or
+  reads for it: research readers, spikes, foundation, module parts, integrate,
+  every fix loop, the green rounds, triage+fix. The two mechanical exceptions
+  run cooler: checkpoints at `'medium'`, the baseline gate at `'low'` (it only
+  runs the gate and reports — a weak read safely aborts, never corrupts).
+- **judge (`'fable'`)** — everything that designs or reviews. The once-per-run
+  planning authors run effort `'high'` — decompose, subsystem design, the
+  adversarial critique, synthesis, plan-build — because their mistakes
+  propagate into every downstream agent with nothing above them to catch it.
+  The in-loop checks run `'medium'` — every module verify, the crown-jewel
+  foundation verify, the live-frontend judge, the simplification wave, the
+  final review lenses, the wireframe reconcile — where retries, delta rounds,
+  and the test gate provide the redundancy instead.
 
-**If you have a frontier model available, pass it as apex** — today that means
-Fable; adapt to whatever the smartest model is when you read this:
-
-```
-models: { apex: 'fable' }              // frontier judgment on planning + reviews only
-models: { heavy: 'opus', apex: 'fable' }   // and/or keep the fan-out off a pricey main-loop model
-```
-
-No review ever runs below heavy.
+The split is "Fable orchestrating Sonnet": judge calls produce the plans,
+verdicts, and findings; build calls execute them, and the next judge pass
+checks the work. A judge call that dies (capacity blip, or a review the model
+won't do — it happens to security lenses) retries once on Fable, then falls
+back to **Opus** — reviews never fall to Sonnet, and Opus never touches
+implementation.
 
 ## License
 

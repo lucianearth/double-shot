@@ -70,13 +70,13 @@ Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/americano-plan.js",
                    designDimensions: [{ label, prompt, uses?: [researchIdx] }, …],
                    styleRef?,                // styleRef: an existing plan doc to match in voice/shape
                    wireframesDir?,           // approved wireframe set (stories.md + frames + decisions.md) = the UX contract; adds a Reconcile phase
-                   models? } })              // models: { grunt?, heavy?, apex? } — see below
+                 } })
 
 Workflow({ scriptPath: "${CLAUDE_SKILL_DIR}/workflows/americano-build.js",
-           args: { blueprintPath: outDoc, repoPath, gateCmd?, envPrefix?, constraints?, models? } })
+           args: { blueprintPath: outDoc, repoPath, gateCmd?, envPrefix?, constraints? } })
 ```
 
-`gateCmd` is the repo's own green gate (e.g. `./scripts/green.sh`, `make test`, `npm test`); the build auto-detects from the blueprint if omitted. `models` pins every spawned agent to one of three tiers so a fan-out never silently inherits an expensive main-loop model: `grunt` (mechanical stages — research readers, baseline gate, checkpoints; default `'sonnet'`), `heavy` (judgment stages — synthesis, plan, build, verify, integrate, triage; default inherit), and `apex` (the highest-stakes calls — design, the adversarial critique, the simplification wave — which applies load-bearing simplifications directly, since simplification is what keeps a codebase from growing without bound — and the final review lenses; defaults to heavy so it's pure opt-in). No review ever runs below heavy. Orchestrating from a pricier main-loop model? Pass `models: { heavy: 'opus' }`. Want a frontier model on just planning + reviews? Pass `models: { apex: 'fable' }`. Each workflow runs in the background and returns one structured result; you're notified on completion.
+`gateCmd` is the repo's own green gate (e.g. `./scripts/green.sh`, `make test`, `npm test`); the build auto-detects from the blueprint if omitted. Model + effort are prescriptive — hardcoded per call, no args knob, nothing inherits the session (constants at the top of each workflow script). Build ('sonnet', effort 'high') writes the code: research readers, module parts, integrate, every fix loop, the green rounds, triage+fix — with checkpoints at 'medium' and the baseline gate at 'low'. Judge ('fable') designs and reviews — the once-per-run planning authors (design, the adversarial critique, synthesis, plan-build) at effort 'high', the in-loop checks at 'medium': every module verify, the simplification wave — which applies load-bearing simplifications directly, since simplification is what keeps a codebase from growing without bound — and the final review lenses. A judge call that dies retries once on fable, then falls back to opus — reviews never fall to sonnet, and opus never touches implementation. Each workflow runs in the background and returns one structured result; you're notified on completion.
 
 ## Operating principles
 
