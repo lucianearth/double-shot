@@ -106,7 +106,12 @@ One `NN-name.html` per screen (numeric prefix = presentation order). Copy
 - Distinct states (empty, error, first-run) are their own frames — FULL screens, exactly
   like the state they portray. There is no half-height fragment class: a shrunken frame
   reads as a popup and confuses humans and agents alike. If something truly is a
-  sheet/dialog, draw it over its dimmed parent screen inside one full frame.
+  sheet/dialog, draw it over its dimmed parent screen inside one full frame — the kit's
+  `.dim` + `.sheet` classes are exactly this.
+- For modern mobile apps the kit also carries floating chrome (`.nav.floating`,
+  `.tab.center`, `.btn.circle`, `.bar.floating`), a madlib composer (`.madlib`/`.blank`),
+  and a map surface (`.map`/`.pin`) — use these rather than approximating; they're
+  structure, not polish.
 - Optionally group the set into journeys: put `data-section="Donor journey — the first
   give"` on the first frame of each group; the showcase renders a section header there
   and every frame's `data-title` as a visible caption.
